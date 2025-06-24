@@ -51,6 +51,7 @@ class Settings(BaseSettings):
 
     teamup_calendar: str = Field(..., alias="TEAMUP_CALENDAR_KEY")
     teamup_token: str = Field(..., alias="TEAMUP_API_TOKEN")
+    teamup_subcalendar_id: int = Field(..., alias="SUBCALENDAR_ID")
     webhook_secret: str = Field("", alias="TEAMUP_WEBHOOK_SECRET")  # Optional for initial setup
 
     # Performance caches only - system works without these files
@@ -693,7 +694,14 @@ async def cancel_dc_event(dc_id: int):
 # ----------------------------------------------------------------------------
 # Discord → Teamup helpers (remote_id = "dc-<discord_event_id>")
 # ----------------------------------------------------------------------------
-MIN_BODY = {"signup_enabled": False, "comments_enabled": False, "attachments": []}
+# Dynamic MIN_BODY function to use configured subcalendar
+def get_min_body():
+    return {
+        "signup_enabled": False, 
+        "comments_enabled": False, 
+        "attachments": [],
+        "subcalendar_ids": [CFG.teamup_subcalendar_id]
+    }
 
 
 def format_teamup_datetime(dt_obj: dt.datetime) -> str:
@@ -709,7 +717,7 @@ async def create_tu_event_from_dc(ev: ScheduledEvent) -> str:
             "end_dt": format_teamup_datetime(ev.end_time),
             "location": ev.location or "Discord",
             "remote_id": f"dc-{ev.id}", 
-            **MIN_BODY
+            **get_min_body()
         }
         data = await tu("POST", "/events", body)
         return str(data["event"]["id"])
@@ -726,7 +734,7 @@ async def update_tu_event(tu_id: str, ev: ScheduledEvent):
             "start_dt": format_teamup_datetime(ev.start_time),
             "end_dt": format_teamup_datetime(ev.end_time),
             "location": ev.location or "Discord", 
-            **MIN_BODY
+            **get_min_body()
         }
         await tu("PUT", f"/events/{tu_id}", body)
     except Exception as e:
