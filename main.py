@@ -814,13 +814,16 @@ async def post_in_thread(dc_id: int, content: str):
 # ----------------------------------------------------------------------------
 @bot.event
 async def on_guild_scheduled_event_create(event: ScheduledEvent):
-    """External-only sync prevents mirroring Discord-internal voice/stage events."""
-    if event.id in REVERSE_MAP or event.entity_type != EntityType.external:
+    """Sync all Discord event types to Teamup for comprehensive calendar integration."""
+    if event.id in REVERSE_MAP:
+        log.warning("Event %s already exists in mapping, skipping create", event.id)
         return
 
     try:
         check_bot_ready()
         await rate_limit_teamup()
+        log.info("Creating Teamup event for Discord event %s (type: %s, name: %s)", 
+                event.id, event.entity_type, event.name)
         tu_id = await create_tu_event_from_dc(event)
         EVENT_MAP[tu_id] = event.id
         REVERSE_MAP[event.id] = tu_id
