@@ -68,15 +68,16 @@ def validate_config():
     errors = []
     
     # Check required tokens are not empty
-    if not CFG.discord_token or len(CFG.discord_token) < 50:
-        errors.append("Invalid Discord token")
-    if not CFG.teamup_token or len(CFG.teamup_token) < 10:
-        errors.append("Invalid Teamup token")
+    if not CFG.discord_token or not CFG.discord_token.strip():
+        errors.append("Discord token is required")
+    if not CFG.teamup_token or not CFG.teamup_token.strip():
+        errors.append("Teamup token is required")
+    if not CFG.teamup_calendar or not CFG.teamup_calendar.strip():
+        errors.append("Teamup calendar key is required")
+    
     # Webhook secret is optional for initial setup - warn if empty but don't fail
     if not CFG.webhook_secret:
         log.warning("Webhook secret is empty - webhook functionality will be disabled")
-    elif len(CFG.webhook_secret) < 16:
-        errors.append("Webhook secret too short (minimum 16 characters)")
     
     # Check IDs are valid
     if CFG.guild_id <= 0:
@@ -85,10 +86,6 @@ def validate_config():
         errors.append("Invalid events channel ID")
     if CFG.guest_role <= 0:
         errors.append("Invalid guest role ID")
-    
-    # Check calendar key format
-    if not CFG.teamup_calendar or len(CFG.teamup_calendar) < 8:
-        errors.append("Invalid Teamup calendar key")
     
     if errors:
         for error in errors:
