@@ -819,7 +819,7 @@ async def post_in_thread(dc_id: int, content: str):
 # Discord ➜ Teamup gateway events
 # ----------------------------------------------------------------------------
 @bot.event
-async def on_guild_scheduled_event_create(event: ScheduledEvent):
+async def on_scheduled_event_create(event: ScheduledEvent):
     """Sync all Discord event types to Teamup for comprehensive calendar integration."""
     log.info("🎯 DISCORD EVENT CREATE TRIGGERED!")
     log.info("   Event ID: %s", event.id)
@@ -858,7 +858,7 @@ async def on_guild_scheduled_event_create(event: ScheduledEvent):
         log.error("Full traceback: %s", traceback.format_exc())
 
 @bot.event
-async def on_guild_scheduled_event_update(before: ScheduledEvent, after: ScheduledEvent):
+async def on_scheduled_event_update(before: ScheduledEvent, after: ScheduledEvent):
     """Sync Discord event updates to corresponding Teamup events."""
     log.info("🔄 DISCORD EVENT UPDATE TRIGGERED!")
     log.info("   Event ID: %s", after.id)
@@ -881,7 +881,7 @@ async def on_guild_scheduled_event_update(before: ScheduledEvent, after: Schedul
 
 
 @bot.event
-async def on_guild_scheduled_event_delete(event: ScheduledEvent):
+async def on_scheduled_event_delete(event: ScheduledEvent):
     """Cascading cleanup maintains sync integrity when events are deleted."""
     log.info("🗑️ DISCORD EVENT DELETE TRIGGERED!")
     log.info("   Event ID: %s", event.id)
