@@ -869,6 +869,41 @@ async def on_guild_scheduled_event_delete(event: ScheduledEvent):
 # ----------------------------------------------------------------------------
 app = FastAPI()
 
+@app.get("/debug")
+async def debug_endpoint():
+    """Debug endpoint to view current mappings and Discord events."""
+    try:
+        g = guild()
+        discord_events = []
+        
+        # Get current Discord events
+        for event in await g.fetch_scheduled_events():
+            discord_events.append({
+                "id": event.id,
+                "name": event.name,
+                "type": str(event.entity_type),
+                "location": event.location,
+                "start_time": event.start_time.isoformat() if event.start_time else None,
+                "in_mapping": event.id in REVERSE_MAP
+            })
+        
+        return JSONResponse({
+            "event_mappings": {
+                "teamup_to_discord": EVENT_MAP,
+                "discord_to_teamup": REVERSE_MAP,
+                "thread_mappings": THREAD_MAP
+            },
+            "discord_events": discord_events,
+            "cache_sizes": {
+                "event_map": len(EVENT_MAP),
+                "reverse_map": len(REVERSE_MAP),
+                "thread_map": len(THREAD_MAP),
+                "active_views": len(_active_views)
+            }
+        })
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 @app.get("/health")
 @app.head("/health")
 async def health_endpoint():
