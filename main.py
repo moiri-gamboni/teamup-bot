@@ -902,72 +902,155 @@ async def health_endpoint():
             "guild_available": False
         }, status_code=503)
 
-async def handle_teamup_trigger(trigger: str, ev: Dict[str, Any]):
-    """Webhook-driven sync ensures real-time Discord updates from Teamup changes."""
-    async with _webhook_lock:
-        if not ev or "id" not in ev:
-            log.warning("Invalid event data in webhook: %s", ev)
+async def sync_teamup_signup_to_discord(event_id: str, signup_name: str, is_signup: bool):
+    """Sync Teamup signup/unsignup to Discord event interest."""
+    dc_id = EVENT_MAP.get(event_id)
+    if not dc_id:
+        log.warning("No Discord event found for Teamup event %s", event_id)
+        return
+        
+    try:
+        # Find Discord user by display name (best effort matching)
+        guild_obj = guild()
+        user = None
+        
+        # Try exact match first
+        for member in guild_obj.members:
+            if member.display_name == signup_name:
+                user = member
+                break
+                
+        # Try case-insensitive match if exact fails
+        if not user:
+            signup_lower = signup_name.lower()
+            for member in guild_obj.members:
+                if member.display_name.lower() == signup_lower:
+                    user = member
+                    break
+                    
+        if not user:
+            log.warning("Could not find Discord user with name '%s' for signup sync", signup_name)
             return
             
-        tu_id = str(ev["id"])
+        dc_event = await guild_obj.fetch_scheduled_event(dc_id)
+        
+        if is_signup:
+            await dc_event.add_user(user)
+            log.info("Synced Teamup signup to Discord interest: %s for event %s", signup_name, event_id)
+        else:
+            await dc_event.remove_user(user)
+            log.info("Synced Teamup unsignup to Discord disinterest: %s for event %s", signup_name, event_id)
+            
+    except discord.NotFound:
+        log.warning("Discord event %s not found during signup sync", dc_id)
+    except Exception as e:
+        log.error("Failed to sync Teamup signup to Discord for user %s: %s", signup_name, e)
+
+
+async def handle_teamup_trigger(trigger: str, data: Dict[str, Any]):
+    """Webhook-driven sync ensures real-time Discord updates from Teamup changes."""
+    async with _webhook_lock:
         manage_cache_size()
 
     try:
-        if trigger == "event.created":
-            if tu_id in EVENT_MAP:
-                log.warning("Event %s already exists, skipping create", tu_id)
+        # Handle event lifecycle triggers
+        if trigger in ["event.created", "event.modified", "event.removed"]:
+            ev = data.get("event")
+            if not ev or "id" not in ev:
+                log.warning("Invalid event data in webhook: %s", ev)
                 return
                 
-            dc_id = await create_dc_event_from_tu(ev)
+            tu_id = str(ev["id"])
             
-            try:
-                root, thread = await post_root_embed(ev, trigger)
-                EVENT_MAP[tu_id] = dc_id
-                REVERSE_MAP[dc_id] = tu_id
-                THREAD_MAP[dc_id] = thread
-                save_events()
-                log.info("Created Discord event %s with thread %s for Teamup event %s", dc_id, thread, tu_id)
-            except Exception as e:
-                log.error("Failed to create thread for event %s: %s", tu_id, e)
+            if trigger == "event.created":
+                if tu_id in EVENT_MAP:
+                    log.warning("Event %s already exists, skipping create", tu_id)
+                    return
+                    
+                dc_id = await create_dc_event_from_tu(ev)
+                
                 try:
-                    await cancel_dc_event(dc_id)
-                except Exception as cleanup_error:
-                    log.error("Failed to cleanup Discord event %s after thread failure: %s", dc_id, cleanup_error)
-                raise
-            return
+                    root, thread = await post_root_embed(ev, trigger)
+                    EVENT_MAP[tu_id] = dc_id
+                    REVERSE_MAP[dc_id] = tu_id
+                    THREAD_MAP[dc_id] = thread
+                    save_events()
+                    log.info("Created Discord event %s with thread %s for Teamup event %s", dc_id, thread, tu_id)
+                except Exception as e:
+                    log.error("Failed to create thread for event %s: %s", tu_id, e)
+                    try:
+                        await cancel_dc_event(dc_id)
+                    except Exception as cleanup_error:
+                        log.error("Failed to cleanup Discord event %s after thread failure: %s", dc_id, cleanup_error)
+                    raise
+                return
 
-        if trigger == "event.modified":
-            dc_id = EVENT_MAP.get(tu_id)
-            if not dc_id:
-                log.warning("No Discord event found for Teamup event %s", tu_id)
+            if trigger == "event.modified":
+                dc_id = EVENT_MAP.get(tu_id)
+                if not dc_id:
+                    log.warning("No Discord event found for Teamup event %s", tu_id)
+                    return
+                    
+                await update_dc_event(dc_id, ev)
+                try:
+                    await post_in_thread(dc_id, "✏️ **Updated**.")
+                except Exception as e:
+                    log.warning("Failed to post thread update for event %s: %s", dc_id, e)
+                return
+
+            if trigger == "event.removed":
+                dc_id = EVENT_MAP.pop(tu_id, None)
+                if dc_id:
+                    REVERSE_MAP.pop(dc_id, None)
+                    save_events()
+                    
+                    try:
+                        await cancel_dc_event(dc_id)
+                        await post_in_thread(dc_id, "❌ **Cancelled**.")
+                        await cleanup_thread(dc_id)
+                    except Exception as e:
+                        log.error("Failed to cancel Discord event %s: %s", dc_id, e)
+                        try:
+                            await cleanup_thread(dc_id)
+                        except Exception as cleanup_e:
+                            log.error("Failed to cleanup thread after event cancellation failure: %s", cleanup_e)
                 return
                 
-            await update_dc_event(dc_id, ev)
-            try:
-                await post_in_thread(dc_id, "✏️ **Updated**.")
-            except Exception as e:
-                log.warning("Failed to post thread update for event %s: %s", dc_id, e)
-            return
-
-        if trigger == "event.removed":
-            dc_id = EVENT_MAP.pop(tu_id, None)
-            if dc_id:
-                REVERSE_MAP.pop(dc_id, None)
-                save_events()
+        # Handle signup lifecycle triggers  
+        elif trigger in ["event_signup.created", "event_signup.removed"]:
+            signup = data.get("signup")
+            event_id = data.get("event_id")
+            
+            if not signup or not event_id:
+                log.warning("Invalid signup data in webhook: signup=%s, event_id=%s", signup, event_id)
+                return
                 
-                try:
-                    await cancel_dc_event(dc_id)
-                    await post_in_thread(dc_id, "❌ **Cancelled**.")
-                    await cleanup_thread(dc_id)
-                except Exception as e:
-                    log.error("Failed to cancel Discord event %s: %s", dc_id, e)
-                    try:
-                        await cleanup_thread(dc_id)
-                    except Exception as cleanup_e:
-                        log.error("Failed to cleanup thread after event cancellation failure: %s", cleanup_e)
+            signup_name = signup.get("name")
+            if not signup_name:
+                log.warning("Signup missing name field: %s", signup)
+                return
+                
+            is_signup = trigger == "event_signup.created"
+            await sync_teamup_signup_to_discord(str(event_id), signup_name, is_signup)
+            return
+            
+        elif trigger == "event_signup.modified":
+            # For modified signups, we don't need to sync anything to Discord
+            # since Discord only has binary interested/not interested state
+            log.debug("Ignoring signup modification (no Discord equivalent): %s", data)
+            return
+            
+        # Handle other triggers we don't care about
+        elif trigger.startswith("event_comment."):
+            log.debug("Ignoring comment trigger (not implemented): %s", trigger)
+            return
+            
+        else:
+            log.warning("Unknown trigger received: %s", trigger)
+            return
                     
     except Exception as e:
-        log.error("Failed to handle Teamup trigger '%s' for event %s: %s", trigger, tu_id, e)
+        log.error("Failed to handle Teamup trigger '%s': %s", trigger, e)
         raise
 
 @app.post("/teamup")
@@ -1019,8 +1102,14 @@ async def teamup_webhook(req: Request):
             log.warning("Dispatch is not a dictionary: %s", payload["dispatch"])
             raise HTTPException(status_code=400, detail="Invalid dispatch type")
             
-        if "trigger" not in payload["dispatch"] or "event" not in payload["dispatch"]:
-            log.warning("Missing required fields in dispatch: %s", payload["dispatch"])
+        if "trigger" not in payload["dispatch"]:
+            log.warning("Missing trigger in dispatch: %s", payload["dispatch"])
+            raise HTTPException(status_code=400, detail="Missing trigger")
+            
+        # Some triggers (like signup events) don't have "event" field, they have other fields
+        trigger = payload["dispatch"]["trigger"]
+        if trigger.startswith("event.") and "event" not in payload["dispatch"]:
+            log.warning("Missing event field for trigger %s: %s", trigger, payload["dispatch"])
             raise HTTPException(status_code=400, detail="Invalid dispatch structure")
         
         # Process webhook synchronously to catch errors
@@ -1032,7 +1121,7 @@ async def teamup_webhook(req: Request):
                 raise HTTPException(status_code=503, detail="Discord service unavailable")
             
             await handle_teamup_trigger(payload["dispatch"]["trigger"],
-                                         payload["dispatch"]["event"])
+                                         payload["dispatch"])
             return JSONResponse({"ok": True})
         except HTTPException:
             raise  # Re-raise HTTP exceptions as-is
