@@ -1003,15 +1003,22 @@ async def teamup_webhook(req: Request):
         # Handle verification/ping requests that might have different structure
         if "dispatch" not in payload:
             log.info("No 'dispatch' key found - might be a verification request")
-            # Check if it's a simple verification ping
-            if len(payload) == 0 or any(key in payload for key in ["test", "ping", "verification"]):
-                log.info("Treating as verification request")
+            return JSONResponse({"ok": True, "status": "verification_ok"})
+        
+        # Check if dispatch is an empty array (webhook verification)
+        if isinstance(payload["dispatch"], list):
+            if len(payload["dispatch"]) == 0:
+                log.info("Empty dispatch array - webhook verification request")
                 return JSONResponse({"ok": True, "status": "verification_ok"})
             else:
-                log.warning("Unknown payload structure: %s", payload)
-                raise HTTPException(status_code=400, detail="Invalid payload structure")
+                log.warning("Dispatch is non-empty array: %s", payload["dispatch"])
+                raise HTTPException(status_code=400, detail="Unexpected dispatch array format")
         
-        # Validate event payload structure
+        # Validate event payload structure (dispatch should be a dict)
+        if not isinstance(payload["dispatch"], dict):
+            log.warning("Dispatch is not a dictionary: %s", payload["dispatch"])
+            raise HTTPException(status_code=400, detail="Invalid dispatch type")
+            
         if "trigger" not in payload["dispatch"] or "event" not in payload["dispatch"]:
             log.warning("Missing required fields in dispatch: %s", payload["dispatch"])
             raise HTTPException(status_code=400, detail="Invalid dispatch structure")
