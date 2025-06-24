@@ -176,9 +176,21 @@ def save_events():
 # ----------------------------------------------------------------------------
 # Logging
 # ----------------------------------------------------------------------------
-logging.basicConfig(level=logging.INFO,
-                    format="%(levelname)s | %(name)s :: %(message)s")
+import discord.utils
+
+# Set up Discord.py logging first
+discord.utils.setup_logging(level=logging.INFO, root=True)
+
+# Get our application logger
 log = logging.getLogger("teamup_bot")
+
+# Enable DEBUG logging for Discord gateway events (temporary for debugging)
+logging.getLogger('discord.gateway').setLevel(logging.DEBUG)
+logging.getLogger('discord.client').setLevel(logging.DEBUG)
+
+# Reduce HTTP request noise in production
+logging.getLogger('discord.http').setLevel(logging.WARNING)
+logging.getLogger('httpx').setLevel(logging.WARNING)
 
 # ----------------------------------------------------------------------------
 # HTTP – Teamup helper
