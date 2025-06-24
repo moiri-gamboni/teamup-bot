@@ -815,54 +815,95 @@ async def post_in_thread(dc_id: int, content: str):
 @bot.event
 async def on_guild_scheduled_event_create(event: ScheduledEvent):
     """Sync all Discord event types to Teamup for comprehensive calendar integration."""
+    log.info("🎯 DISCORD EVENT CREATE TRIGGERED!")
+    log.info("   Event ID: %s", event.id)
+    log.info("   Event Name: %s", event.name)
+    log.info("   Event Type: %s", event.entity_type)
+    log.info("   Event Guild: %s", event.guild_id if hasattr(event, 'guild_id') else 'unknown')
+    log.info("   Target Guild: %s", CFG.guild_id)
+    log.info("   Already in mapping: %s", event.id in REVERSE_MAP)
+    
     if event.id in REVERSE_MAP:
         log.warning("Event %s already exists in mapping, skipping create", event.id)
         return
 
     try:
+        log.info("🔧 Starting Teamup event creation process...")
         check_bot_ready()
+        log.info("✅ Bot ready check passed")
+        
         await rate_limit_teamup()
-        log.info("Creating Teamup event for Discord event %s (type: %s, name: %s)", 
+        log.info("✅ Rate limit check passed")
+        
+        log.info("📅 Creating Teamup event for Discord event %s (type: %s, name: %s)", 
                 event.id, event.entity_type, event.name)
+        
         tu_id = await create_tu_event_from_dc(event)
+        log.info("✅ Teamup event created with ID: %s", tu_id)
+        
         EVENT_MAP[tu_id] = event.id
         REVERSE_MAP[event.id] = tu_id
         save_events()
-        log.info("Created Teamup event %s for Discord event %s", tu_id, event.id)
+        log.info("✅ Mappings saved successfully")
+        log.info("🎉 Successfully created Teamup event %s for Discord event %s", tu_id, event.id)
     except Exception as e:
-        log.error("Failed to create Teamup event for Discord event %s: %s", event.id, e)
+        log.error("❌ Failed to create Teamup event for Discord event %s: %s", event.id, e)
+        import traceback
+        log.error("Full traceback: %s", traceback.format_exc())
 
 @bot.event
 async def on_guild_scheduled_event_update(before: ScheduledEvent, after: ScheduledEvent):
     """Sync Discord event updates to corresponding Teamup events."""
+    log.info("🔄 DISCORD EVENT UPDATE TRIGGERED!")
+    log.info("   Event ID: %s", after.id)
+    log.info("   Event Name: %s -> %s", before.name, after.name)
+    log.info("   Event Type: %s", after.entity_type)
+    
     tu_id = REVERSE_MAP.get(after.id)
     if tu_id:
+        log.info("✅ Found Teamup mapping: %s", tu_id)
         try:
             await update_tu_event(tu_id, after)
             await post_in_thread(after.id, "✏️ **Updated**.")
+            log.info("✅ Successfully updated Teamup event %s", tu_id)
         except Exception as e:
-            log.error("Failed to update Teamup event %s: %s", tu_id, e)
+            log.error("❌ Failed to update Teamup event %s: %s", tu_id, e)
+            import traceback
+            log.error("Full traceback: %s", traceback.format_exc())
+    else:
+        log.warning("❌ No Teamup mapping found for Discord event %s", after.id)
 
 
 @bot.event
 async def on_guild_scheduled_event_delete(event: ScheduledEvent):
     """Cascading cleanup maintains sync integrity when events are deleted."""
+    log.info("🗑️ DISCORD EVENT DELETE TRIGGERED!")
+    log.info("   Event ID: %s", event.id)
+    log.info("   Event Name: %s", event.name)
+    log.info("   Event Type: %s", event.entity_type)
+    
     tu_id = REVERSE_MAP.pop(event.id, None)
     
     view = _active_views.pop(event.id, None)
     if view:
         view.cleanup()
+        log.info("✅ Cleaned up view for event %s", event.id)
         
     if tu_id:
+        log.info("✅ Found Teamup mapping: %s", tu_id)
         try:
             await delete_tu_event(tu_id)
             EVENT_MAP.pop(tu_id, None)
             await post_in_thread(event.id, "❌ **Cancelled**.")
             await cleanup_thread(event.id)
             save_events()
-            log.info("Deleted Teamup event %s for Discord event %s", tu_id, event.id)
+            log.info("✅ Successfully deleted Teamup event %s for Discord event %s", tu_id, event.id)
         except Exception as e:
-            log.error("Failed to delete Teamup event %s: %s", tu_id, e)
+            log.error("❌ Failed to delete Teamup event %s: %s", tu_id, e)
+            import traceback
+            log.error("Full traceback: %s", traceback.format_exc())
+    else:
+        log.warning("❌ No Teamup mapping found for Discord event %s", event.id)
 
 # ----------------------------------------------------------------------------
 # Teamup webhook → Discord dispatcher (FastAPI)
@@ -1200,22 +1241,52 @@ def cleanup_mappings():
 async def on_ready():
     """Initialize bot state and register persistent UI components."""
     try:
-        log.info("Bot connected, initializing...")
+        log.info("🚀 Bot connected, initializing...")
+        log.info("   Bot user: %s", bot.user)
+        log.info("   Bot ID: %s", bot.user.id)
+        
+        # Log intents for debugging
+        log.info("🔧 Bot intents:")
+        log.info("   members: %s", bot.intents.members)
+        log.info("   guilds: %s", bot.intents.guilds)
+        log.info("   guild_scheduled_events: %s", bot.intents.guild_scheduled_events)
+        log.info("   message_content: %s", bot.intents.message_content)
         
         # Validate configuration first
         validate_config()
+        log.info("✅ Configuration validated")
         
         # Check dependencies
         await check_dependencies()
+        log.info("✅ Dependencies checked")
+        
+        # Check guild access
+        target_guild = bot.get_guild(CFG.guild_id)
+        if target_guild:
+            log.info("✅ Target guild found: %s", target_guild.name)
+            log.info("   Guild member count: %s", target_guild.member_count)
+            log.info("   Bot permissions: %s", target_guild.me.guild_permissions.value if target_guild.me else 'unknown')
+            
+            # List existing events
+            events = await target_guild.fetch_scheduled_events()
+            log.info("📅 Found %d existing scheduled events:", len(events))
+            for event in events:
+                log.info("   - %s (ID: %s, Type: %s)", event.name, event.id, event.entity_type)
+        else:
+            log.error("❌ Target guild not found! Guild ID: %s", CFG.guild_id)
         
         bot.add_view(PersistentSignupView())  # global persistence for buttons
+        log.info("✅ Persistent view added")
+        
         await rebuild_state()
+        log.info("✅ State rebuilt")
         
         # Ensure mapping consistency
         cleanup_mappings()
+        log.info("✅ Mappings cleaned up")
         
         # Clean up any stale views from previous runs
-        log.info("Cleaning up stale views...")
+        log.info("🧹 Cleaning up stale views...")
         for dc_id in list(_active_views.keys()):
             try:
                 await guild().fetch_scheduled_event(dc_id)
@@ -1227,11 +1298,15 @@ async def on_ready():
         
         # Run initial cache management
         manage_cache_size()
+        log.info("✅ Cache management completed")
                     
-        log.info("✅ Bot ready - logged in as %s with %d active views", bot.user, len(_active_views))
+        log.info("🎉 Bot ready - logged in as %s with %d active views", bot.user, len(_active_views))
+        log.info("🎯 Bot is now listening for Discord scheduled event changes...")
         
     except Exception as e:
-        log.error("Failed to initialize bot: %s", e)
+        log.error("❌ Failed to initialize bot: %s", e)
+        import traceback
+        log.error("Full traceback: %s", traceback.format_exc())
         raise
 
 # ----------------------------------------------------------------------------
