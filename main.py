@@ -257,6 +257,7 @@ async def tu(method: str, path: str, body: Optional[Dict[str, Any]] = None, retr
 intents = discord.Intents.default()
 intents.members = True
 intents.guilds = True
+intents.guild_scheduled_events = True  # Required for scheduled event handlers!
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 def guild() -> discord.Guild:  # type: ignore
