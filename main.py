@@ -867,6 +867,7 @@ async def on_guild_scheduled_event_delete(event: ScheduledEvent):
 app = FastAPI()
 
 @app.get("/health")
+@app.head("/health")
 async def health_endpoint():
     """Health check endpoint for UptimeRobot and Koyeb monitoring.
     
