@@ -352,7 +352,12 @@ async def rebuild_state():
                     log.warning("Events channel not found, skipping thread rebuild")
                     return
                     
-                threads = {th.name: th.id for th in (await chan.archived_threads()).threads}
+                # Collect archived threads - chan.archived_threads() is an async iterator
+                threads = {}
+                async for thread in chan.archived_threads():
+                    threads[thread.name] = thread.id
+                    
+                # Add active threads
                 threads.update({th.name: th.id for th in chan.threads})
                 g = guild()
                 
