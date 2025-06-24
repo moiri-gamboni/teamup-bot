@@ -980,15 +980,40 @@ async def teamup_webhook(req: Request):
         raw = await req.body()
         sig = req.headers.get("Teamup-Signature", "")
         
+        # Log detailed webhook information for debugging
+        log.info("Received webhook request:")
+        log.info("  Headers: %s", dict(req.headers))
+        log.info("  Raw body: %s", raw.decode('utf-8', errors='replace'))
+        log.info("  Signature: %s", sig)
+        
         # Skip signature verification if webhook secret is not configured
         if CFG.webhook_secret and not verify_webhook_signature(raw, sig, CFG.webhook_secret):
+            log.warning("HMAC signature verification failed")
             raise HTTPException(status_code=401, detail="Bad signature")
             
         payload = json.loads(raw)
+        log.info("  Parsed payload: %s", payload)
         
-        # Validate payload structure
-        if "dispatch" not in payload or "trigger" not in payload["dispatch"] or "event" not in payload["dispatch"]:
-            raise HTTPException(status_code=400, detail="Invalid payload structure")
+        # Handle webhook verification requests (Teamup sends these when setting up webhooks)
+        if not isinstance(payload, dict):
+            log.warning("Payload is not a dictionary, treating as verification")
+            return JSONResponse({"ok": True, "status": "verification_received"})
+            
+        # Handle verification/ping requests that might have different structure
+        if "dispatch" not in payload:
+            log.info("No 'dispatch' key found - might be a verification request")
+            # Check if it's a simple verification ping
+            if len(payload) == 0 or any(key in payload for key in ["test", "ping", "verification"]):
+                log.info("Treating as verification request")
+                return JSONResponse({"ok": True, "status": "verification_ok"})
+            else:
+                log.warning("Unknown payload structure: %s", payload)
+                raise HTTPException(status_code=400, detail="Invalid payload structure")
+        
+        # Validate event payload structure
+        if "trigger" not in payload["dispatch"] or "event" not in payload["dispatch"]:
+            log.warning("Missing required fields in dispatch: %s", payload["dispatch"])
+            raise HTTPException(status_code=400, detail="Invalid dispatch structure")
         
         # Process webhook synchronously to catch errors
         try:
@@ -1009,10 +1034,13 @@ async def teamup_webhook(req: Request):
             
     except HTTPException:
         raise
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        log.error("Failed to parse JSON: %s", e)
+        log.error("Raw body was: %s", raw.decode('utf-8', errors='replace'))
         raise HTTPException(status_code=400, detail="Invalid JSON")
     except Exception as e:
         log.error("Webhook processing error: %s", e)
+        log.error("Raw body was: %s", raw.decode('utf-8', errors='replace') if 'raw' in locals() else 'unavailable')
         raise HTTPException(status_code=500, detail="Internal server error")
 
 # ----------------------------------------------------------------------------
