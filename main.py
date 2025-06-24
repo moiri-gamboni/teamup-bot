@@ -696,13 +696,17 @@ async def cancel_dc_event(dc_id: int):
 MIN_BODY = {"signup_enabled": False, "comments_enabled": False, "attachments": []}
 
 
+def format_teamup_datetime(dt_obj: dt.datetime) -> str:
+    """Format datetime for Teamup API (no microseconds)."""
+    return dt_obj.astimezone(dt.timezone.utc).replace(microsecond=0).isoformat()
+
 async def create_tu_event_from_dc(ev: ScheduledEvent) -> str:
     """Embed Discord ID in remote_id field to enable stateless event origin tracking."""
     try:
         body = {
             "title": ev.name,
-            "start_dt": ev.start_time.astimezone(dt.timezone.utc).isoformat(),
-            "end_dt": ev.end_time.astimezone(dt.timezone.utc).isoformat(),
+            "start_dt": format_teamup_datetime(ev.start_time),
+            "end_dt": format_teamup_datetime(ev.end_time),
             "location": ev.location or "Discord",
             "remote_id": f"dc-{ev.id}", 
             **MIN_BODY
@@ -719,8 +723,8 @@ async def update_tu_event(tu_id: str, ev: ScheduledEvent):
     try:
         body = {
             "title": ev.name,
-            "start_dt": ev.start_time.astimezone(dt.timezone.utc).isoformat(),
-            "end_dt": ev.end_time.astimezone(dt.timezone.utc).isoformat(),
+            "start_dt": format_teamup_datetime(ev.start_time),
+            "end_dt": format_teamup_datetime(ev.end_time),
             "location": ev.location or "Discord", 
             **MIN_BODY
         }
