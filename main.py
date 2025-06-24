@@ -29,30 +29,37 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 import httpx
 from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings
 import uvicorn
 
 # ----------------------------------------------------------------------------
 # Config
 # ----------------------------------------------------------------------------
-class Settings(BaseModel):
+class Settings(BaseSettings):
     """Configuration with fail-fast validation to catch deployment issues early."""
-    discord_token: str = Field(..., env="DISCORD_TOKEN")
-    guild_id: int = Field(..., env="DISCORD_GUILD_ID")
-    events_channel: int = Field(..., env="EVENTS_CHANNEL_ID")
-    guest_role: int = Field(..., env="CURRENT_GUEST_ROLE_ID")
-    use_personal_links: bool = Field(True, env="USE_PERSONAL_LINKS")
+    model_config = {
+        "env_file": ".env", 
+        "env_file_encoding": "utf-8",
+        "extra": "ignore"  # Ignore extra environment variables
+    }
+    
+    discord_token: str = Field(..., alias="DISCORD_TOKEN")
+    guild_id: int = Field(..., alias="DISCORD_GUILD_ID")
+    events_channel: int = Field(..., alias="EVENTS_CHANNEL_ID")
+    guest_role: int = Field(..., alias="CURRENT_GUEST_ROLE_ID")
+    use_personal_links: bool = Field(True, alias="USE_PERSONAL_LINKS")
 
-    teamup_calendar: str = Field(..., env="TEAMUP_CALENDAR_KEY")
-    teamup_token: str = Field(..., env="TEAMUP_API_TOKEN")
-    webhook_secret: str = Field(..., env="TEAMUP_WEBHOOK_SECRET")
+    teamup_calendar: str = Field(..., alias="TEAMUP_CALENDAR_KEY")
+    teamup_token: str = Field(..., alias="TEAMUP_API_TOKEN")
+    webhook_secret: str = Field("", alias="TEAMUP_WEBHOOK_SECRET")  # Optional for initial setup
 
     # Performance caches only - system works without these files
-    links_file: pathlib.Path = Field("links.json", env="LINKS_FILE")
-    events_file: pathlib.Path = Field("events_map.json", env="EVENTS_FILE")
-    threads_file: pathlib.Path = Field("threads_map.json", env="THREADS_FILE")
+    links_file: pathlib.Path = Field("links.json", alias="LINKS_FILE")
+    events_file: pathlib.Path = Field("events_map.json", alias="EVENTS_FILE")
+    threads_file: pathlib.Path = Field("threads_map.json", alias="THREADS_FILE")
 
-    host: str = Field("0.0.0.0", env="BOT_HOST")
-    port: int = Field(8000, env="BOT_PORT")
+    host: str = Field("0.0.0.0", alias="BOT_HOST")
+    port: int = Field(8000, alias="BOT_PORT")
 CFG = Settings()
 
 # Configuration validation
@@ -65,7 +72,10 @@ def validate_config():
         errors.append("Invalid Discord token")
     if not CFG.teamup_token or len(CFG.teamup_token) < 10:
         errors.append("Invalid Teamup token")
-    if not CFG.webhook_secret or len(CFG.webhook_secret) < 16:
+    # Webhook secret is optional for initial setup - warn if empty but don't fail
+    if not CFG.webhook_secret:
+        log.warning("Webhook secret is empty - webhook functionality will be disabled")
+    elif len(CFG.webhook_secret) < 16:
         errors.append("Webhook secret too short (minimum 16 characters)")
     
     # Check IDs are valid
@@ -250,7 +260,6 @@ async def tu(method: str, path: str, body: Optional[Dict[str, Any]] = None, retr
 intents = discord.Intents.default()
 intents.members = True
 intents.guilds = True
-intents.scheduled_events = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 def guild() -> discord.Guild:  # type: ignore
@@ -973,7 +982,9 @@ async def teamup_webhook(req: Request):
     try:
         raw = await req.body()
         sig = req.headers.get("Teamup-Signature", "")
-        if not verify_webhook_signature(raw, sig, CFG.webhook_secret):
+        
+        # Skip signature verification if webhook secret is not configured
+        if CFG.webhook_secret and not verify_webhook_signature(raw, sig, CFG.webhook_secret):
             raise HTTPException(status_code=401, detail="Bad signature")
             
         payload = json.loads(raw)
