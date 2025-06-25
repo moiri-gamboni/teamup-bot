@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     teamup_calendar: str = Field(..., alias="TEAMUP_CALENDAR_KEY")
     teamup_token: str = Field(..., alias="TEAMUP_API_TOKEN")
     teamup_subcalendar_id: int = Field(..., alias="SUBCALENDAR_ID")
+    teamup_access_link: str = Field("", alias="TEAMUP_ACCESS_LINK")  # General access link for viewing/modifying events
     webhook_secret: str = Field("", alias="TEAMUP_WEBHOOK_SECRET")  # Optional for initial setup
 
     # Performance caches only - system works without these files
@@ -806,7 +807,11 @@ async def post_root_embed(tu_ev: Dict[str, Any], trigger: str) -> tuple[int, int
         dc_id = EVENT_MAP.get(str(tu_ev["id"]))
         view = None if trigger == "event.removed" or not dc_id else SignupView(str(tu_ev["id"]), dc_id)
         
-        first_message = await thread.send(embed=embed, view=view)
+        access_message = ""
+        if not CFG.use_personal_links and CFG.teamup_access_link:
+            access_message = f"\n\n📅 You can view and modify this event on Teamup: {CFG.teamup_access_link}"
+        
+        first_message = await thread.send(embed=embed, content=access_message, view=view)
         
         return first_message.id, thread.id
         
