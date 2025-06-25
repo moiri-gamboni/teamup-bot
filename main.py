@@ -142,7 +142,7 @@ MAX_ACTIVE_VIEWS = 100
 
 def manage_cache_size():
     """Prevent memory exhaustion by limiting cache growth in long-running processes."""
-    global USER_LINKS, EVENT_MAP, THREAD_MAP, REVERSE_MAP, _active_views
+    global USER_LINKS, EVENT_MAP, THREAD_MAP, REVERSE_MAP, _active_views, _processed_webhooks
     
     if len(USER_LINKS) > MAX_CACHE_SIZE:
         items = list(USER_LINKS.items())
@@ -163,6 +163,15 @@ def manage_cache_size():
             view.cleanup()
             _active_views.pop(dc_id, None)
         log.info("Trimmed active views to %d entries", len(_active_views))
+    
+    # Clean up old webhook cache entries
+    current_time = time.time()
+    cutoff_time = current_time - _webhook_cache_timeout
+    old_webhooks = [sig for sig, timestamp in _processed_webhooks.items() if timestamp < cutoff_time]
+    for sig in old_webhooks:
+        _processed_webhooks.pop(sig, None)
+    if old_webhooks:
+        log.info("Cleaned up %d old webhook cache entries", len(old_webhooks))
 
 save_links = lambda: _save_atomic(USER_LINKS, CFG.links_file)
 
@@ -303,6 +312,13 @@ _rebuild_lock = asyncio.Lock()
 
 # Webhook processing lock to prevent concurrent state updates
 _webhook_lock = asyncio.Lock()
+
+# Webhook deduplication to prevent processing duplicate webhooks
+_processed_webhooks: Dict[str, float] = {}
+_webhook_cache_timeout = 300  # 5 minutes
+
+# Sync operation tracking to prevent Discord event handlers from triggering during sync
+_sync_operations: Dict[int, str] = {}  # Track Discord event IDs -> operation type currently being synced
 
 # Rate limiting for Discord API calls
 _discord_rate_limiter = defaultdict(list)
@@ -1199,6 +1215,12 @@ async def on_scheduled_event_create(event: ScheduledEvent):
     log.info("   Target Guild: %s", CFG.guild_id)
     log.info("   Already in mapping: %s", event.id in REVERSE_MAP)
     
+    # Skip if this is a sync operation (event created by Teamup webhook)
+    if event.id in _sync_operations:
+        log.info("   Event %s is part of sync operation (%s), skipping Discord→Teamup creation", 
+                event.id, _sync_operations[event.id])
+        return
+    
     if event.id in REVERSE_MAP:
         log.warning("Event %s already exists in mapping, skipping create", event.id)
         return
@@ -1235,9 +1257,16 @@ async def on_scheduled_event_update(before: ScheduledEvent, after: ScheduledEven
     log.info("   Event Name: %s -> %s", before.name, after.name)
     log.info("   Event Type: %s", after.entity_type)
     
+    # Skip if this is a sync operation (event updated by Teamup webhook)
+    if after.id in _sync_operations:
+        log.info("   Event %s is part of sync operation (%s), skipping Discord→Teamup update", 
+                after.id, _sync_operations[after.id])
+        return
+    
     tu_id = REVERSE_MAP.get(after.id)
     if tu_id:
         log.info("✅ Found Teamup mapping: %s", tu_id)
+            
         try:
             await update_tu_event(tu_id, after)
             
@@ -1460,7 +1489,9 @@ async def handle_teamup_trigger(trigger: str, data: Dict[str, Any]):
                         log.warning("Event %s already exists, skipping create", tu_id)
                     return
                     
+                # Mark as sync operation before creating Discord event
                 dc_id = await create_dc_event_from_tu(ev)
+                _sync_operations[dc_id] = "teamup→discord_create"  # Prevent Discord event handler from creating Teamup event
                 
                 try:
                     root, thread = await post_root_embed(ev, trigger)
@@ -1476,6 +1507,9 @@ async def handle_teamup_trigger(trigger: str, data: Dict[str, Any]):
                     except Exception as cleanup_error:
                         log.error("Failed to cleanup Discord event %s after thread failure: %s", dc_id, cleanup_error)
                     raise
+                finally:
+                    # Clean up sync operation tracking
+                    _sync_operations.pop(dc_id, None)
                 return
 
             if trigger == "event.modified":
@@ -1501,46 +1535,37 @@ async def handle_teamup_trigger(trigger: str, data: Dict[str, Any]):
                     log.info("  start_time: %r", current_discord_event.start_time)
                     log.info("  end_time: %r", current_discord_event.end_time)
                     
-                    notes_field = ev.get("notes")
-                    if isinstance(notes_field, dict) and 'html' in notes_field:
-                        teamup_notes = notes_field['html']
-                    elif isinstance(notes_field, str):
-                        teamup_notes = notes_field
-                    else:
-                        teamup_notes = ""
+                    # Store the "before" state for accurate diff detection
+                    discord_before = current_discord_event
                     
-                    teamup_after = {
-                        "title": ev.get("title", ""),
-                        "start_dt": ev.get("start_dt"),
-                        "end_dt": ev.get("end_dt"), 
-                        "location": ev.get("location", ""),
-                        "notes": notes_field,
-                        "description": teamup_notes
-                    }
+                    # Mark as sync operation before updating Discord event
+                    _sync_operations[dc_id] = "teamup→discord_update"
                     
-                    discord_before = {
-                        "title": current_discord_event.name,
-                        "start_dt": current_discord_event.start_time.isoformat() if current_discord_event.start_time else None,
-                        "end_dt": current_discord_event.end_time.isoformat() if current_discord_event.end_time else None,
-                        "location": current_discord_event.location or "",
-                        "description": current_discord_event.description or ""
-                    }
-                    
+                    # Update the Discord event
                     await update_dc_event(dc_id, ev)
                     
-                    embed = create_event_update_embed(
-                        before_data=discord_before,
-                        after_data=teamup_after,
-                        action="updated",
-                        teamup_event_data=ev
-                    )
-                    
-                    await post_in_thread(dc_id, embed=embed)
+                    # Fetch the updated event for comparison
+                    try:
+                        updated_discord_event = await guild().fetch_scheduled_event(dc_id)
+                        
+                        embed = create_event_update_embed(
+                            discord_before=discord_before,
+                            discord_after=updated_discord_event,
+                            action="updated",
+                            teamup_event_data=ev
+                        )
+                        
+                        await post_in_thread(dc_id, embed=embed)
+                    except discord.NotFound:
+                        log.warning("Discord event %s not found after update", dc_id)
                     
                 except discord.NotFound:
                     log.warning("Discord event %s not found during Teamup update", dc_id)
                 except Exception as e:
                     log.warning("Failed to post thread update for event %s: %s", dc_id, e)
+                finally:
+                    # Clean up sync operation tracking
+                    _sync_operations.pop(dc_id, None)
                 return
 
             if trigger == "event.removed":
@@ -1615,19 +1640,31 @@ async def teamup_webhook(req: Request):
         raw = await req.body()
         sig = req.headers.get("Teamup-Signature", "")
         
-        # Log detailed webhook information for debugging
-        log.info("Received webhook request:")
-        log.info("  Headers: %s", dict(req.headers))
-        log.info("  Raw body: %s", raw.decode('utf-8', errors='replace'))
-        log.info("  Signature: %s", sig)
+        # Log webhook information for debugging (reduced verbosity)
+        log.info("Received webhook request (signature: %s)", sig[:16] + "..." if sig else "none")
+        log.debug("  Headers: %s", dict(req.headers))
+        log.debug("  Raw body: %s", raw.decode('utf-8', errors='replace'))
         
         # Skip signature verification if webhook secret is not configured
         if CFG.webhook_secret and not verify_webhook_signature(raw, sig, CFG.webhook_secret):
             log.warning("HMAC signature verification failed")
             raise HTTPException(status_code=401, detail="Bad signature")
-            
+        
+        # Webhook deduplication - check if we've already processed this exact webhook
+        if sig and sig in _processed_webhooks:
+            last_processed = _processed_webhooks[sig]
+            current_time = time.time()
+            if current_time - last_processed < _webhook_cache_timeout:
+                log.info("Skipping duplicate webhook (signature: %s, %.1fs ago)", 
+                        sig[:16] + "...", current_time - last_processed)
+                return JSONResponse({"ok": True, "status": "duplicate_skipped"})
+                
         payload = json.loads(raw)
-        log.info("  Parsed payload: %s", payload)
+        
+        # Mark this webhook as processed
+        if sig:
+            _processed_webhooks[sig] = time.time()
+        log.debug("  Parsed payload: %s", payload)
         
         # Handle webhook verification requests (Teamup sends these when setting up webhooks)
         if not isinstance(payload, dict):
