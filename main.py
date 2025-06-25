@@ -1415,8 +1415,22 @@ async def handle_teamup_trigger(trigger: str, data: Dict[str, Any]):
                     log.warning("No Discord event found for Teamup event %s", tu_id)
                     return
                 
+                # For Discord-originated events, skip Discord updates to prevent sync loops
+                remote_id = ev.get("remote_id", "")
+                if remote_id.startswith("dc-"):
+                    log.debug("Skipping Discord update for Discord-originated event %s to prevent sync loop", tu_id)
+                    return
+                
                 try:
                     current_discord_event = await guild().fetch_scheduled_event(dc_id)
+                    
+                    # Debug the actual Discord event data
+                    log.info("DEBUG: Current Discord event data for %s:", dc_id)
+                    log.info("  name: %r", current_discord_event.name)
+                    log.info("  location: %r", current_discord_event.location)
+                    log.info("  description: %r", current_discord_event.description)
+                    log.info("  start_time: %r", current_discord_event.start_time)
+                    log.info("  end_time: %r", current_discord_event.end_time)
                     
                     notes_field = ev.get("notes")
                     if isinstance(notes_field, dict) and 'html' in notes_field:
