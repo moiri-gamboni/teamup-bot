@@ -23,11 +23,14 @@ COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/tmp/uv-cache \
     uv sync --frozen --no-dev
 
+# Change ownership of dependencies
+RUN chown -R appuser:appgroup /app
+
 # Copy application code
 COPY main.py ./
 
-# Change ownership to app user
-RUN chown -R appuser:appgroup /app
+# Fix ownership of the new file only
+RUN chown appuser:appgroup main.py
 
 # Switch to non-root user
 USER appuser
