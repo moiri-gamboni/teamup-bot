@@ -1026,7 +1026,15 @@ def create_event_update_embed(before_data: Dict[str, Any] = None, after_data: Di
         embed_description = "**Event cancelled**"
         embed_color = 0xe74c3c
     else:
-        embed_title = f"📅 {after.get('title', 'Event')}"
+        # Check if title changed and show diff in embed title
+        current_title = after.get('title', 'Event')
+        old_title = before.get('title', '')
+        
+        if old_title and old_title != current_title:
+            embed_title = f"📅 {current_title} 🔄"
+        else:
+            embed_title = f"📅 {current_title}"
+        
         embed_description = "**Event updated**"
         embed_color = 0xf1c40f
     
@@ -1117,11 +1125,13 @@ def create_event_update_embed(before_data: Dict[str, Any] = None, after_data: Di
     if description or old_description:  # Only show if there are current or previous details
         embed.add_field(name=details_field_name, value=details_value, inline=False)
     
-    # Add title change info if it changed
-    if before.get("title") != after.get("title") and before.get("title"):
+    # Add title change info if it changed (consistent with other field diff formats)
+    current_title = after.get('title', '')
+    old_title = before.get('title', '')
+    if old_title and old_title != current_title:
         embed.add_field(
-            name="📝 Name Changed", 
-            value=f"~~{before['title']}~~ → **{after.get('title', 'Unknown')}**", 
+            name="📝 Name 🔄", 
+            value=f"~~{old_title}~~\n**{current_title}**", 
             inline=False
         )
     
