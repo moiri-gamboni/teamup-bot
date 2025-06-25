@@ -1197,46 +1197,56 @@ async def teamup_webhook(req: Request):
             log.info("No 'dispatch' key found - might be a verification request")
             return JSONResponse({"ok": True, "status": "verification_ok"})
         
-        # Check if dispatch is an empty array (webhook verification)
+        # Handle dispatch as either array or single object
         if isinstance(payload["dispatch"], list):
             if len(payload["dispatch"]) == 0:
                 log.info("Empty dispatch array - webhook verification request")
                 return JSONResponse({"ok": True, "status": "verification_ok"})
-            else:
-                log.warning("Dispatch is non-empty array: %s", payload["dispatch"])
-                raise HTTPException(status_code=400, detail="Unexpected dispatch array format")
-        
-        # Validate event payload structure (dispatch should be a dict)
-        if not isinstance(payload["dispatch"], dict):
-            log.warning("Dispatch is not a dictionary: %s", payload["dispatch"])
-            raise HTTPException(status_code=400, detail="Invalid dispatch type")
             
-        if "trigger" not in payload["dispatch"]:
-            log.warning("Missing trigger in dispatch: %s", payload["dispatch"])
-            raise HTTPException(status_code=400, detail="Missing trigger")
+            # Process each dispatch item in the array
+            log.info("Processing %d dispatch items", len(payload["dispatch"]))
+            results = []
+            for i, dispatch_item in enumerate(payload["dispatch"]):
+                try:
+                    log.info("Processing dispatch item %d: %s", i + 1, dispatch_item.get("trigger", "unknown"))
+                    
+                    if "trigger" not in dispatch_item:
+                        log.warning("Missing trigger in dispatch item %d: %s", i + 1, dispatch_item)
+                        continue
+                        
+                    # Check if we can process the webhook (graceful degradation)
+                    if not await health_check_discord():
+                        log.warning("Discord unavailable, skipping dispatch item %d", i + 1)
+                        continue
+                    
+                    await handle_teamup_trigger(dispatch_item["trigger"], dispatch_item)
+                    results.append({"item": i + 1, "status": "success"})
+                    
+                except Exception as e:
+                    log.error("Failed to process dispatch item %d: %s", i + 1, e)
+                    results.append({"item": i + 1, "status": "error", "error": str(e)})
             
-        # Some triggers (like signup events) don't have "event" field, they have other fields
-        trigger = payload["dispatch"]["trigger"]
-        if trigger.startswith("event.") and "event" not in payload["dispatch"]:
-            log.warning("Missing event field for trigger %s: %s", trigger, payload["dispatch"])
-            raise HTTPException(status_code=400, detail="Invalid dispatch structure")
+            return JSONResponse({"ok": True, "processed": len(results), "results": results})
         
-        # Process webhook synchronously to catch errors
-        try:
+        # Handle single dispatch object (legacy format)
+        elif isinstance(payload["dispatch"], dict):
+            dispatch_item = payload["dispatch"]
+            
+            if "trigger" not in dispatch_item:
+                log.warning("Missing trigger in dispatch: %s", dispatch_item)
+                raise HTTPException(status_code=400, detail="Missing trigger")
+                
             # Check if we can process the webhook (graceful degradation)
             if not await health_check_discord():
                 log.warning("Discord unavailable, deferring webhook processing")
-                # In a production system, you might queue this for later processing
                 raise HTTPException(status_code=503, detail="Discord service unavailable")
             
-            await handle_teamup_trigger(payload["dispatch"]["trigger"],
-                                         payload["dispatch"])
+            await handle_teamup_trigger(dispatch_item["trigger"], dispatch_item)
             return JSONResponse({"ok": True})
-        except HTTPException:
-            raise  # Re-raise HTTP exceptions as-is
-        except Exception as e:
-            log.error("Failed to process Teamup webhook: %s", e)
-            raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+        
+        else:
+            log.warning("Dispatch is neither array nor object: %s", payload["dispatch"])
+            raise HTTPException(status_code=400, detail="Invalid dispatch format")
             
     except HTTPException:
         raise
