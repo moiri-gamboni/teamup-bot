@@ -655,6 +655,34 @@ def parse_datetime_safe(dt_str: str) -> dt.datetime:
         log.error("Failed to parse datetime '%s': %s", dt_str, e)
         raise
 
+def format_datetime_for_display(dt_str: str) -> str:
+    """Format datetime string for display in embeds, handling timezones properly."""
+    if not dt_str:
+        return "Not set"
+    try:
+        # Parse with proper timezone handling
+        parsed = parse_datetime_safe(dt_str)
+        # Use Discord timestamp format for automatic timezone conversion
+        timestamp = int(parsed.timestamp())
+        return f"<t:{timestamp}:F>"  # F = full date and time format
+    except Exception as e:
+        log.warning("Failed to format datetime '%s': %s", dt_str, e)
+        return dt_str
+
+def format_datetime_for_display_short(dt_str: str) -> str:
+    """Format datetime string for display in embeds as short time, handling timezones properly."""
+    if not dt_str:
+        return "Not set"
+    try:
+        # Parse with proper timezone handling
+        parsed = parse_datetime_safe(dt_str)
+        # Use Discord timestamp format for automatic timezone conversion
+        timestamp = int(parsed.timestamp())
+        return f"<t:{timestamp}:t>"  # t = short time format
+    except Exception as e:
+        log.warning("Failed to format datetime '%s': %s", dt_str, e)
+        return dt_str
+
 async def create_dc_event_from_tu(ev: Dict[str, Any]) -> int:
     """External events avoid Discord voice/stage dependencies for real-world events."""
     # Validate required fields
@@ -845,17 +873,24 @@ async def post_root_embed(tu_ev: Dict[str, Any], trigger: str) -> tuple[int, int
         if not start_iso:
             raise ValueError("Event missing start_dt")
             
-        start_dt = dt.datetime.fromisoformat(start_iso)
-        start_human = start_dt.strftime("%A, %B %d, %Y at %I:%M %p")
+        # Use timezone-aware parsing and Discord timestamp formatting
+        start_dt = parse_datetime_safe(start_iso)
+        start_timestamp = int(start_dt.timestamp())
+        start_human = f"<t:{start_timestamp}:F>"  # Full date and time format
         
         time_info = start_human
         if end_iso:
-            end_dt = dt.datetime.fromisoformat(end_iso)
+            end_dt = parse_datetime_safe(end_iso)
+            end_timestamp = int(end_dt.timestamp())
             if start_dt.date() == end_dt.date():
-                end_time = end_dt.strftime("%I:%M %p")
-                time_info = f"{start_dt.strftime('%A, %B %d, %Y')} from {start_dt.strftime('%I:%M %p')} to {end_time}"
+                # Same day - show date once, then time range
+                start_time = f"<t:{start_timestamp}:t>"  # Short time
+                end_time = f"<t:{end_timestamp}:t>"      # Short time
+                date_part = f"<t:{start_timestamp}:D>"   # Date only
+                time_info = f"{date_part} from {start_time} to {end_time}"
             else:
-                end_human = end_dt.strftime("%A, %B %d, %Y at %I:%M %p")
+                # Different days - show full timestamps
+                end_human = f"<t:{end_timestamp}:F>"
                 time_info = f"{start_human} → {end_human}"
         
         try:
@@ -953,8 +988,10 @@ def create_event_diff_embed(before_data: Dict[str, Any] = None, after_data: Dict
         if not dt_str:
             return "Not set"
         try:
-            dt_obj = dt.datetime.fromisoformat(dt_str)
-            return dt_obj.strftime("%A, %B %d, %Y at %I:%M %p")
+            # Use timezone-aware parsing and Discord timestamps
+            dt_obj = parse_datetime_safe(dt_str)
+            timestamp = int(dt_obj.timestamp())
+            return f"<t:{timestamp}:F>"  # Full date and time format
         except:
             return dt_str
     
@@ -977,11 +1014,18 @@ def create_event_diff_embed(before_data: Dict[str, Any] = None, after_data: Dict
                 return start_formatted
             
             try:
-                start_dt = dt.datetime.fromisoformat(start)
-                end_dt = dt.datetime.fromisoformat(end)
+                # Use timezone-aware parsing and Discord timestamps
+                start_dt = parse_datetime_safe(start)
+                end_dt = parse_datetime_safe(end)
+                start_timestamp = int(start_dt.timestamp())
+                end_timestamp = int(end_dt.timestamp())
+                
                 if start_dt.date() == end_dt.date():
-                    end_time = end_dt.strftime("%I:%M %p")
-                    return f"{start_dt.strftime('%A, %B %d, %Y')} from {start_dt.strftime('%I:%M %p')} to {end_time}"
+                    # Same day - show date once, then time range
+                    start_time = f"<t:{start_timestamp}:t>"  # Short time
+                    end_time = f"<t:{end_timestamp}:t>"      # Short time
+                    date_part = f"<t:{start_timestamp}:D>"   # Date only
+                    return f"{date_part} from {start_time} to {end_time}"
                 else:
                     return f"{start_formatted} → {format_datetime(end)}"
             except:
@@ -995,8 +1039,10 @@ def create_event_diff_embed(before_data: Dict[str, Any] = None, after_data: Dict
         changes.append(f"**{new_time}**")
         
         try:
-            new_start = dt.datetime.fromisoformat(after.get("start_dt", ""))
-            notification_parts.append(f"time → {new_start.strftime('%b %d at %I:%M %p')}")
+            # Use timezone-aware parsing and Discord timestamps
+            new_start = parse_datetime_safe(after.get("start_dt", ""))
+            timestamp = int(new_start.timestamp())
+            notification_parts.append(f"time → <t:{timestamp}:f>")  # Short date and time
         except:
             notification_parts.append("time changed")
     
