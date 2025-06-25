@@ -570,6 +570,20 @@ class SignupView(ui.View):
                 log.warning("Discord event %s not found during signup", self.dc_id)
             except Exception as e:
                 log.warning("Failed to add user to Discord event: %s", e)
+            
+            thread_id = THREAD_MAP.get(self.dc_id)
+            if thread_id:
+                try:
+                    thread = await bot.fetch_channel(thread_id)
+                    if hasattr(thread, 'add_user'):
+                        await thread.add_user(itx.user)
+                        log.debug("Added user %s to thread %s for event %s", itx.user.display_name, thread_id, self.dc_id)
+                except discord.NotFound:
+                    log.warning("Thread %s not found during signup", thread_id)
+                except discord.Forbidden:
+                    log.warning("No permission to add user %s to thread %s", itx.user.display_name, thread_id)
+                except Exception as e:
+                    log.warning("Failed to add user %s to thread %s: %s", itx.user.display_name, thread_id, e)
                 
             await itx.followup.send("✅ Signed up!", ephemeral=True)
             
