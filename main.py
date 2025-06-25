@@ -779,10 +779,22 @@ async def post_root_embed(tu_ev: Dict[str, Any], trigger: str) -> tuple[int, int
             
         title = tu_ev.get("title") or "(No title)"
         start_iso = tu_ev.get("start_dt")
+        end_iso = tu_ev.get("end_dt")
         if not start_iso:
             raise ValueError("Event missing start_dt")
             
-        start_human = dt.datetime.fromisoformat(start_iso).strftime("%Y‑%m‑%d %H:%M")
+        start_dt = dt.datetime.fromisoformat(start_iso)
+        start_human = start_dt.strftime("%A, %B %d, %Y at %I:%M %p")
+        
+        time_info = start_human
+        if end_iso:
+            end_dt = dt.datetime.fromisoformat(end_iso)
+            if start_dt.date() == end_dt.date():
+                end_time = end_dt.strftime("%I:%M %p")
+                time_info = f"{start_dt.strftime('%A, %B %d, %Y')} from {start_dt.strftime('%I:%M %p')} to {end_time}"
+            else:
+                end_human = end_dt.strftime("%A, %B %d, %Y at %I:%M %p")
+                time_info = f"{start_human} → {end_human}"
         
         try:
             pointer = await tu("POST", f"/events/{tu_ev['id']}/pointer", {})
@@ -800,9 +812,24 @@ async def post_root_embed(tu_ev: Dict[str, Any], trigger: str) -> tuple[int, int
             type=discord.ChannelType.public_thread
         )
         
-        embed = Embed(description=f"**Event {verbs.get(trigger,'updated')}**: [{title}]({pointer_url})",
-                      color=colors.get(trigger, 0x95a5a6))
-        embed.set_footer(text=f"Starts {start_human}")
+        embed = Embed(
+            title=f"📅 {title}",
+            url=pointer_url,
+            description=f"**Event {verbs.get(trigger,'updated')}**",
+            color=colors.get(trigger, 0x95a5a6)
+        )
+        
+        embed.add_field(name="🕒 When", value=time_info, inline=False)
+        
+        location = tu_ev.get("location")
+        if location and location.strip():
+            embed.add_field(name="📍 Where", value=location, inline=False)
+        
+        description = tu_ev.get("notes") or tu_ev.get("description")
+        if description and description.strip():
+            if len(description) > 1000:
+                description = description[:997] + "..."
+            embed.add_field(name="📝 Details", value=description, inline=False)
 
         dc_id = EVENT_MAP.get(str(tu_ev["id"]))
         view = None if trigger == "event.removed" or not dc_id else SignupView(str(tu_ev["id"]), dc_id)
