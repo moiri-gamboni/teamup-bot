@@ -861,6 +861,133 @@ async def post_root_embed(tu_ev: Dict[str, Any], trigger: str) -> tuple[int, int
         raise
 
 
+def create_event_diff_embed(before_data: Dict[str, Any] = None, after_data: Dict[str, Any] = None, 
+                           discord_before: ScheduledEvent = None, discord_after: ScheduledEvent = None,
+                           action: str = "updated") -> tuple[str, Embed]:
+    """Create a rich diff embed showing what changed in an event."""
+    
+    if discord_before and discord_after:
+        before = {
+            "title": discord_before.name,
+            "start_dt": discord_before.start_time.isoformat() if discord_before.start_time else None,
+            "end_dt": discord_before.end_time.isoformat() if discord_before.end_time else None,
+            "location": discord_before.location or "",
+            "description": discord_before.description or ""
+        }
+        after = {
+            "title": discord_after.name,
+            "start_dt": discord_after.start_time.isoformat() if discord_after.start_time else None,
+            "end_dt": discord_after.end_time.isoformat() if discord_after.end_time else None,
+            "location": discord_after.location or "",
+            "description": discord_after.description or ""
+        }
+    else:
+        before = before_data or {}
+        after = after_data or {}
+    
+    changes = []
+    notification_parts = []
+    
+    def format_datetime(dt_str):
+        if not dt_str:
+            return "Not set"
+        try:
+            dt_obj = dt.datetime.fromisoformat(dt_str)
+            return dt_obj.strftime("%A, %B %d, %Y at %I:%M %p")
+        except:
+            return dt_str
+    
+    # Check for changes
+    if before.get("title") != after.get("title"):
+        changes.append("📝 **Name**")
+        if before.get("title"):
+            changes.append(f"~~{before['title']}~~")
+        changes.append(f"**{after.get('title', 'Unknown')}**")
+        notification_parts.append(f"name → \"{after.get('title', 'Unknown')}\"")
+    
+    if before.get("start_dt") != after.get("start_dt") or before.get("end_dt") != after.get("end_dt"):
+        changes.append("\n🕒 **Time**")
+        
+        def format_time_range(start, end):
+            if not start:
+                return "Not set"
+            start_formatted = format_datetime(start)
+            if not end:
+                return start_formatted
+            
+            try:
+                start_dt = dt.datetime.fromisoformat(start)
+                end_dt = dt.datetime.fromisoformat(end)
+                if start_dt.date() == end_dt.date():
+                    end_time = end_dt.strftime("%I:%M %p")
+                    return f"{start_dt.strftime('%A, %B %d, %Y')} from {start_dt.strftime('%I:%M %p')} to {end_time}"
+                else:
+                    return f"{start_formatted} → {format_datetime(end)}"
+            except:
+                return f"{start_formatted} → {format_datetime(end)}"
+        
+        old_time = format_time_range(before.get("start_dt"), before.get("end_dt"))
+        new_time = format_time_range(after.get("start_dt"), after.get("end_dt"))
+        
+        if old_time != "Not set":
+            changes.append(f"~~{old_time}~~")
+        changes.append(f"**{new_time}**")
+        
+        try:
+            new_start = dt.datetime.fromisoformat(after.get("start_dt", ""))
+            notification_parts.append(f"time → {new_start.strftime('%b %d at %I:%M %p')}")
+        except:
+            notification_parts.append("time changed")
+    
+    if before.get("location", "").strip() != after.get("location", "").strip():
+        changes.append("\n📍 **Location**")
+        old_loc = before.get("location", "").strip()
+        new_loc = after.get("location", "").strip()
+        
+        if old_loc:
+            changes.append(f"~~{old_loc}~~")
+        changes.append(f"**{new_loc or 'No location'}**")
+        notification_parts.append(f"location → \"{new_loc or 'removed'}\"")
+    
+    old_desc = (before.get("notes") or before.get("description") or "").strip()
+    new_desc = (after.get("notes") or after.get("description") or "").strip()
+    
+    if old_desc != new_desc:
+        changes.append("\n📝 **Details**")
+        if old_desc:
+            display_old = old_desc[:100] + "..." if len(old_desc) > 100 else old_desc
+            changes.append(f"~~{display_old}~~")
+        
+        if new_desc:
+            display_new = new_desc[:200] + "..." if len(new_desc) > 200 else new_desc
+            changes.append(f"**{display_new}**")
+        else:
+            changes.append("**Details removed**")
+        
+        notification_parts.append("details changed")
+    
+    if action == "cancelled":
+        notification = f"🗑️ **Event cancelled**"
+        embed_title = "🗑️ Event Cancelled"
+        embed_color = 0xe74c3c
+    else:
+        if notification_parts:
+            notification = f"✏️ **Event updated**: {', '.join(notification_parts)}"
+        else:
+            notification = f"✏️ **Event updated**"
+        embed_title = "✏️ Event Updated"
+        embed_color = 0xf1c40f
+    
+    embed = Embed(
+        title=embed_title,
+        description="\n".join(changes) if changes else "Event details have been updated.",
+        color=embed_color,
+        timestamp=dt.datetime.now(dt.timezone.utc)
+    )
+    
+    return notification, embed
+
+
 async def cleanup_thread(dc_id: int):
     """Clean up a thread when its associated event is deleted."""
     tid = THREAD_MAP.pop(dc_id, None)
@@ -882,14 +1009,14 @@ async def cleanup_thread(dc_id: int):
         finally:
             save_events()
 
-async def post_in_thread(dc_id: int, content: str):
+async def post_in_thread(dc_id: int, content: str = None, embed: Embed = None):
     """Post update messages in event-specific threads for focused discussions."""
     tid = THREAD_MAP.get(dc_id)
     if tid:
         try:
             await rate_limit_discord("thread_post")
             th = await bot.fetch_channel(tid)  # type: ignore
-            await th.send(content)
+            await th.send(content=content, embed=embed)
         except discord.NotFound:
             log.warning("Thread %s not found, removing from mapping", tid)
             THREAD_MAP.pop(dc_id, None)
@@ -900,7 +1027,7 @@ async def post_in_thread(dc_id: int, content: str):
             # Retry once
             try:
                 th = await bot.fetch_channel(tid)  # type: ignore
-                await th.send(content)
+                await th.send(content=content, embed=embed)
             except Exception as retry_e:
                 log.error("Failed to post in thread after retry %s: %s", tid, retry_e)
         except Exception as e:
@@ -961,7 +1088,14 @@ async def on_scheduled_event_update(before: ScheduledEvent, after: ScheduledEven
         log.info("✅ Found Teamup mapping: %s", tu_id)
         try:
             await update_tu_event(tu_id, after)
-            await post_in_thread(after.id, "✏️ **Updated**.")
+            
+            notification, embed = create_event_diff_embed(
+                discord_before=before,
+                discord_after=after,
+                action="updated"
+            )
+            await post_in_thread(after.id, content=notification, embed=embed)
+            
             log.info("✅ Successfully updated Teamup event %s", tu_id)
         except Exception as e:
             log.error("❌ Failed to update Teamup event %s: %s", tu_id, e)
@@ -991,7 +1125,13 @@ async def on_scheduled_event_delete(event: ScheduledEvent):
         try:
             await delete_tu_event(tu_id)
             EVENT_MAP.pop(tu_id, None)
-            await post_in_thread(event.id, "❌ **Cancelled**.")
+            
+            notification, embed = create_event_diff_embed(
+                after_data={"title": event.name},
+                action="cancelled"
+            )
+            await post_in_thread(event.id, content=notification, embed=embed)
+            
             await cleanup_thread(event.id)
             save_events()
             log.info("✅ Successfully deleted Teamup event %s for Discord event %s", tu_id, event.id)
@@ -1188,10 +1328,39 @@ async def handle_teamup_trigger(trigger: str, data: Dict[str, Any]):
                 if not dc_id:
                     log.warning("No Discord event found for Teamup event %s", tu_id)
                     return
-                    
-                await update_dc_event(dc_id, ev)
+                
                 try:
-                    await post_in_thread(dc_id, "✏️ **Updated**.")
+                    current_discord_event = await guild().fetch_scheduled_event(dc_id)
+                    
+                    teamup_after = {
+                        "title": ev.get("title", ""),
+                        "start_dt": ev.get("start_dt"),
+                        "end_dt": ev.get("end_dt"), 
+                        "location": ev.get("location", ""),
+                        "description": ev.get("notes") or ev.get("description") or ""
+                    }
+                    
+                    discord_before = {
+                        "title": current_discord_event.name,
+                        "start_dt": current_discord_event.start_time.isoformat() if current_discord_event.start_time else None,
+                        "end_dt": current_discord_event.end_time.isoformat() if current_discord_event.end_time else None,
+                        "location": current_discord_event.location or "",
+                        "description": current_discord_event.description or ""
+                    }
+                    
+                    await update_dc_event(dc_id, ev)
+                    
+                    notification, embed = create_event_diff_embed(
+                        before_data=discord_before,
+                        after_data=teamup_after,
+                        action="updated"
+                    )
+                    
+                    
+                    await post_in_thread(dc_id, content=notification, embed=embed)
+                    
+                except discord.NotFound:
+                    log.warning("Discord event %s not found during Teamup update", dc_id)
                 except Exception as e:
                     log.warning("Failed to post thread update for event %s: %s", dc_id, e)
                 return
@@ -1204,7 +1373,13 @@ async def handle_teamup_trigger(trigger: str, data: Dict[str, Any]):
                     
                     try:
                         await cancel_dc_event(dc_id)
-                        await post_in_thread(dc_id, "❌ **Cancelled**.")
+                        
+                        notification, embed = create_event_diff_embed(
+                            after_data={"title": ev.get("title", "Event")},
+                            action="cancelled"
+                        )
+                        await post_in_thread(dc_id, content=notification, embed=embed)
+                        
                         await cleanup_thread(dc_id)
                     except Exception as e:
                         log.error("Failed to cancel Discord event %s: %s", dc_id, e)
