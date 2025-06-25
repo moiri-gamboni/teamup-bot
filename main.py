@@ -646,13 +646,23 @@ async def create_dc_event_from_tu(ev: Dict[str, Any]) -> int:
         if start >= end:
             raise ValueError("Event start time must be before end time")
             
+        notes_field = ev.get("notes")
+        if isinstance(notes_field, dict) and 'html' in notes_field:
+            teamup_description = notes_field['html']
+        elif isinstance(notes_field, str):
+            teamup_description = notes_field
+        else:
+            teamup_description = ""
+        
+        discord_description = teamup_description
+        
         dc_ev = await g.create_scheduled_event(
             name=ev.get("title") or "(No title)",
             start_time=start,
             end_time=end,
             entity_type=EntityType.external,
             location=ev.get("location") or "Teamup",
-            description="Created from Teamup"
+            description=discord_description
         )
         return dc_ev.id
     except discord.RateLimited as e:
@@ -683,12 +693,22 @@ async def update_dc_event(dc_id: int, ev: Dict[str, Any]):
             log.warning("Invalid event times (start >= end), skipping update")
             return
             
+        notes_field = ev.get("notes")
+        if isinstance(notes_field, dict) and 'html' in notes_field:
+            teamup_description = notes_field['html']
+        elif isinstance(notes_field, str):
+            teamup_description = notes_field
+        else:
+            teamup_description = ""
+        
+        discord_description = teamup_description
+        
         await dcev.edit(
             name=ev.get("title") or dcev.name,
             start_time=start,
             end_time=end,
             location=ev.get("location") or dcev.location or "Teamup",
-            description="Updated from Teamup"
+            description=discord_description
         )
     except discord.NotFound:
         log.warning("Discord event %s not found, removing from mapping", dc_id)
@@ -746,6 +766,7 @@ async def create_tu_event_from_dc(ev: ScheduledEvent) -> str:
             "start_dt": format_teamup_datetime(ev.start_time),
             "end_dt": format_teamup_datetime(ev.end_time),
             "location": ev.location or "Discord",
+            "notes": {"html": ev.description or ""},
             "remote_id": f"dc-{ev.id}", 
             **get_min_body()
         }
@@ -764,7 +785,8 @@ async def update_tu_event(tu_id: str, ev: ScheduledEvent):
             "title": ev.name,
             "start_dt": format_teamup_datetime(ev.start_time),
             "end_dt": format_teamup_datetime(ev.end_time),
-            "location": ev.location or "Discord", 
+            "location": ev.location or "Discord",
+            "notes": {"html": ev.description or ""},
             **get_min_body()
         }
         await tu("PUT", f"/events/{tu_id}", body)
@@ -840,11 +862,19 @@ async def post_root_embed(tu_ev: Dict[str, Any], trigger: str) -> tuple[int, int
         if location and location.strip():
             embed.add_field(name="📍 Where", value=location, inline=False)
         
-        description = tu_ev.get("notes") or tu_ev.get("description")
-        log.info("DEBUG: description field data for event %s: notes_type=%s, notes_value=%r, description_type=%s, description_value=%r", 
+        notes_field = tu_ev.get("notes")
+        if isinstance(notes_field, dict) and 'html' in notes_field:
+            notes_text = notes_field['html']
+        elif isinstance(notes_field, str):
+            notes_text = notes_field
+        else:
+            notes_text = None
+            
+        description = notes_text
+        log.info("DEBUG: notes field data for event %s: notes_type=%s, notes_value=%r, extracted_notes=%r", 
                 tu_ev.get('id'), 
                 type(tu_ev.get("notes")).__name__, tu_ev.get("notes"),
-                type(tu_ev.get("description")).__name__, tu_ev.get("description"))
+                notes_text)
         if description and description.strip():
             if len(description) > 1000:
                 description = description[:997] + "..."
@@ -961,19 +991,23 @@ def create_event_diff_embed(before_data: Dict[str, Any] = None, after_data: Dict
         changes.append(f"**{new_loc or 'No location'}**")
         notification_parts.append(f"location → \"{new_loc or 'removed'}\"")
     
-    # Debug logging for description/notes field types
+    # Debug logging for notes field types
     before_notes = before.get("notes")
-    before_desc = before.get("description")
     after_notes = after.get("notes")
-    after_desc = after.get("description")
-    log.info("DEBUG: description/notes comparison - before_notes_type=%s, before_notes_value=%r, before_desc_type=%s, before_desc_value=%r, after_notes_type=%s, after_notes_value=%r, after_desc_type=%s, after_desc_value=%r", 
+    log.info("DEBUG: notes comparison - before_notes_type=%s, before_notes_value=%r, after_notes_type=%s, after_notes_value=%r", 
              type(before_notes).__name__, before_notes,
-             type(before_desc).__name__, before_desc,
-             type(after_notes).__name__, after_notes,
-             type(after_desc).__name__, after_desc)
+             type(after_notes).__name__, after_notes)
     
-    old_desc = (before.get("notes") or before.get("description") or "").strip()
-    new_desc = (after.get("notes") or after.get("description") or "").strip()
+    def extract_notes_text(notes_field):
+        if isinstance(notes_field, dict) and 'html' in notes_field:
+            return notes_field['html']
+        elif isinstance(notes_field, str):
+            return notes_field
+        else:
+            return ""
+    
+    old_desc = extract_notes_text(before.get("notes")).strip()
+    new_desc = extract_notes_text(after.get("notes")).strip()
     
     if old_desc != new_desc:
         changes.append("\n📝 **Details**")
@@ -1358,12 +1392,21 @@ async def handle_teamup_trigger(trigger: str, data: Dict[str, Any]):
                 try:
                     current_discord_event = await guild().fetch_scheduled_event(dc_id)
                     
+                    notes_field = ev.get("notes")
+                    if isinstance(notes_field, dict) and 'html' in notes_field:
+                        teamup_notes = notes_field['html']
+                    elif isinstance(notes_field, str):
+                        teamup_notes = notes_field
+                    else:
+                        teamup_notes = ""
+                    
                     teamup_after = {
                         "title": ev.get("title", ""),
                         "start_dt": ev.get("start_dt"),
                         "end_dt": ev.get("end_dt"), 
                         "location": ev.get("location", ""),
-                        "description": ev.get("notes") or ev.get("description") or ""
+                        "notes": notes_field,
+                        "description": teamup_notes
                     }
                     
                     discord_before = {
