@@ -526,6 +526,17 @@ async def on_scheduled_event_user_add(event: ScheduledEvent, user: discord.User)
         try:
             await tu_signup(tu_id, user)
             log.debug("Synced Discord interest to Teamup signup for user %s, event %s", user.display_name, tu_id)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 400:
+                try:
+                    error_data = e.response.json()
+                    error_message = error_data.get("error", {}).get("message", "")
+                    if "signed up already" in error_message.lower():
+                        log.debug("User %s already signed up for Teamup event %s", user.display_name, tu_id)
+                        return
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+            log.error("Failed to sync Discord interest to Teamup for user %s: %s", user.display_name, e)
         except Exception as e:
             log.error("Failed to sync Discord interest to Teamup for user %s: %s", user.display_name, e)
 
@@ -586,6 +597,21 @@ class SignupView(ui.View):
                     log.warning("Failed to add user %s to thread %s: %s", itx.user.display_name, thread_id, e)
                 
             await itx.followup.send("✅ Signed up!", ephemeral=True)
+            
+        except httpx.HTTPStatusError as e:
+            # Handle specific Teamup API errors
+            if e.response.status_code == 400:
+                try:
+                    error_data = e.response.json()
+                    error_message = error_data.get("error", {}).get("message", "")
+                    if "signed up already" in error_message.lower():
+                        await itx.followup.send("ℹ️ You're already signed up for this event!", ephemeral=True)
+                        return
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+            
+            log.error("Teamup signup failed for user %s: %s", itx.user, e)
+            await itx.followup.send("❌ Signup failed. Please try again.", ephemeral=True)
             
         except Exception as e:
             log.error("Signup failed for user %s: %s", itx.user, e)
