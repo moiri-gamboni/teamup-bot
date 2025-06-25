@@ -182,12 +182,26 @@ import discord.utils
 # Set up Discord.py logging first
 discord.utils.setup_logging(level=logging.INFO, root=True)
 
-# Get our application logger
-log = logging.getLogger("teamup_bot")
+# Force all loggers to use Discord's formatting by clearing their handlers
+# and ensuring they propagate to the root logger
+def harmonize_all_logging():
+    """Ensure all loggers use Discord's formatting from the root logger."""
+    root_logger = logging.getLogger()
+    
+    # Get all existing loggers
+    loggers_to_fix = [
+        logging.getLogger(name) for name in logging.Logger.manager.loggerDict
+    ]
+    
+    for logger in loggers_to_fix:
+        if logger.handlers:  # Only clear if it has handlers
+            logger.handlers.clear()
+        logger.propagate = True  # Ensure it propagates to root
 
-# Enable DEBUG logging for Discord gateway events (temporary for debugging)
-logging.getLogger('discord.gateway').setLevel(logging.DEBUG)
-logging.getLogger('discord.client').setLevel(logging.DEBUG)
+# Apply harmonization
+harmonize_all_logging()
+
+log = logging.getLogger("teamup_bot")
 
 # Reduce HTTP request noise in production
 logging.getLogger('discord.http').setLevel(logging.WARNING)
@@ -1374,7 +1388,13 @@ async def start_all():
         loop = asyncio.get_running_loop()
         bot_task = loop.create_task(bot.start(CFG.discord_token))
         
-        config = uvicorn.Config(app, host=CFG.host, port=CFG.port, log_level="info")
+        config = uvicorn.Config(
+            app, 
+            host=CFG.host, 
+            port=CFG.port, 
+            log_level="info",
+            log_config=None  # Use system logging instead of uvicorn's default
+        )
         server = uvicorn.Server(config)
         server_task = loop.create_task(server.serve())
         
