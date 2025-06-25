@@ -1423,7 +1423,7 @@ async def handle_teamup_trigger(trigger: str, data: Dict[str, Any]):
             
             if trigger == "event.created":
                 # Check if this is a Discord-originated event that came back via webhook
-                remote_id = ev.get("remote_id", "")
+                remote_id = ev.get("remote_id") or ""
                 is_discord_originated = remote_id.startswith("dc-")
                 
                 if tu_id in EVENT_MAP:
@@ -1473,7 +1473,7 @@ async def handle_teamup_trigger(trigger: str, data: Dict[str, Any]):
                     return
                 
                 # For Discord-originated events, skip Discord updates to prevent sync loops
-                remote_id = ev.get("remote_id", "")
+                remote_id = ev.get("remote_id") or ""
                 if remote_id.startswith("dc-"):
                     log.debug("Skipping Discord update for Discord-originated event %s to prevent sync loop", tu_id)
                     return
