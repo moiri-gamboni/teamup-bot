@@ -1086,8 +1086,30 @@ async def handle_teamup_trigger(trigger: str, data: Dict[str, Any]):
             tu_id = str(ev["id"])
             
             if trigger == "event.created":
+                # Check if this is a Discord-originated event that came back via webhook
+                remote_id = ev.get("remote_id", "")
+                is_discord_originated = remote_id.startswith("dc-")
+                
                 if tu_id in EVENT_MAP:
-                    log.warning("Event %s already exists, skipping create", tu_id)
+                    if is_discord_originated:
+                        # This is a Discord event that was synced to Teamup and came back via webhook
+                        # We should still create the thread and embed, but not a new Discord event
+                        dc_id = EVENT_MAP[tu_id]
+                        log.info("Discord-originated event %s (Discord ID: %s) came back via webhook, creating thread", tu_id, dc_id)
+                        
+                        try:
+                            # Check if thread already exists to avoid duplicates
+                            if dc_id not in THREAD_MAP:
+                                root, thread = await post_root_embed(ev, trigger)
+                                THREAD_MAP[dc_id] = thread
+                                save_events()
+                                log.info("Created thread %s for existing Discord event %s (Teamup event %s)", thread, dc_id, tu_id)
+                            else:
+                                log.info("Thread already exists for Discord event %s", dc_id)
+                        except Exception as e:
+                            log.error("Failed to create thread for Discord-originated event %s: %s", tu_id, e)
+                    else:
+                        log.warning("Event %s already exists, skipping create", tu_id)
                     return
                     
                 dc_id = await create_dc_event_from_tu(ev)
