@@ -711,7 +711,8 @@ async def cancel_dc_event(dc_id: int):
 # Dynamic MIN_BODY function to use configured subcalendar
 def get_min_body():
     return {
-        "signup_enabled": False, 
+        "signup_enabled": True,
+        "signup_deadline": None,
         "comments_enabled": False, 
         "attachments": [],
         "subcalendar_ids": [CFG.teamup_subcalendar_id]
