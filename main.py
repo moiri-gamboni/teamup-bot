@@ -957,19 +957,13 @@ async def post_root_embed(tu_ev: Dict[str, Any], trigger: str) -> tuple[int, int
         raise
 
 
-def create_event_diff_embed(before_data: Dict[str, Any] = None, after_data: Dict[str, Any] = None, 
-                           discord_before: ScheduledEvent = None, discord_after: ScheduledEvent = None,
-                           action: str = "updated") -> tuple[str, Embed]:
-    """Create a rich diff embed showing what changed in an event."""
+def create_event_update_embed(before_data: Dict[str, Any] = None, after_data: Dict[str, Any] = None, 
+                             discord_before: ScheduledEvent = None, discord_after: ScheduledEvent = None,
+                             action: str = "updated", teamup_event_data: Dict[str, Any] = None) -> Embed:
+    """Create a full event embed with colored diff information showing what changed."""
     
-    if discord_before and discord_after:
-        before = {
-            "title": discord_before.name,
-            "start_dt": discord_before.start_time.isoformat() if discord_before.start_time else None,
-            "end_dt": discord_before.end_time.isoformat() if discord_before.end_time else None,
-            "location": discord_before.location or "",
-            "description": discord_before.description or ""
-        }
+    # Determine the "after" state for displaying the full event info
+    if discord_after:
         after = {
             "title": discord_after.name,
             "start_dt": discord_after.start_time.isoformat() if discord_after.start_time else None,
@@ -978,98 +972,109 @@ def create_event_diff_embed(before_data: Dict[str, Any] = None, after_data: Dict
             "description": discord_after.description or ""
         }
     else:
-        before = before_data or {}
         after = after_data or {}
     
-    changes = []
-    notification_parts = []
+    # For the "before" state used for diff comparison
+    if discord_before and discord_after:
+        before = {
+            "title": discord_before.name,
+            "start_dt": discord_before.start_time.isoformat() if discord_before.start_time else None,
+            "end_dt": discord_before.end_time.isoformat() if discord_before.end_time else None,
+            "location": discord_before.location or "",
+            "description": discord_before.description or ""
+        }
+    else:
+        before = before_data or {}
     
-    def format_datetime(dt_str):
+    def format_datetime_for_embed(dt_str):
         if not dt_str:
             return "Not set"
         try:
-            # Use timezone-aware parsing and Discord timestamps
             dt_obj = parse_datetime_safe(dt_str)
             timestamp = int(dt_obj.timestamp())
             return f"<t:{timestamp}:F>"  # Full date and time format
         except:
             return dt_str
     
-    # Check for changes
-    if before.get("title") != after.get("title"):
-        changes.append("📝 **Name**")
-        if before.get("title"):
-            changes.append(f"~~{before['title']}~~")
-        changes.append(f"**{after.get('title', 'Unknown')}**")
-        notification_parts.append(f"name → \"{after.get('title', 'Unknown')}\"")
-    
-    if before.get("start_dt") != after.get("start_dt") or before.get("end_dt") != after.get("end_dt"):
-        changes.append("\n🕒 **Time**")
-        
-        def format_time_range(start, end):
-            if not start:
-                return "Not set"
-            start_formatted = format_datetime(start)
-            if not end:
-                return start_formatted
-            
-            try:
-                # Use timezone-aware parsing and Discord timestamps
-                start_dt = parse_datetime_safe(start)
-                end_dt = parse_datetime_safe(end)
-                start_timestamp = int(start_dt.timestamp())
-                end_timestamp = int(end_dt.timestamp())
-                
-                if start_dt.date() == end_dt.date():
-                    # Same day - show date once, then time range
-                    start_time = f"<t:{start_timestamp}:t>"  # Short time
-                    end_time = f"<t:{end_timestamp}:t>"      # Short time
-                    date_part = f"<t:{start_timestamp}:D>"   # Date only
-                    return f"{date_part} from {start_time} to {end_time}"
-                else:
-                    return f"{start_formatted} → {format_datetime(end)}"
-            except:
-                return f"{start_formatted} → {format_datetime(end)}"
-        
-        old_time = format_time_range(before.get("start_dt"), before.get("end_dt"))
-        new_time = format_time_range(after.get("start_dt"), after.get("end_dt"))
-        
-        if old_time != "Not set":
-            changes.append(f"~~{old_time}~~")
-        changes.append(f"**{new_time}**")
+    def format_time_range_for_embed(start, end):
+        if not start:
+            return "Not set"
+        start_formatted = format_datetime_for_embed(start)
+        if not end:
+            return start_formatted
         
         try:
-            # Use timezone-aware parsing and Discord timestamps
-            new_start = parse_datetime_safe(after.get("start_dt", ""))
-            timestamp = int(new_start.timestamp())
-            notification_parts.append(f"time → <t:{timestamp}:f>")  # Short date and time
+            start_dt = parse_datetime_safe(start)
+            end_dt = parse_datetime_safe(end)
+            start_timestamp = int(start_dt.timestamp())
+            end_timestamp = int(end_dt.timestamp())
+            
+            if start_dt.date() == end_dt.date():
+                # Same day - show date once, then time range
+                start_time = f"<t:{start_timestamp}:t>"  # Short time
+                end_time = f"<t:{end_timestamp}:t>"      # Short time
+                date_part = f"<t:{start_timestamp}:D>"   # Date only
+                return f"{date_part} from {start_time} to {end_time}"
+            else:
+                return f"{start_formatted} → {format_datetime_for_embed(end)}"
         except:
-            notification_parts.append("time changed")
+            return f"{start_formatted} → {format_datetime_for_embed(end)}"
     
-    # Debug logging for location field types
-    before_location = before.get("location", "")
-    after_location = after.get("location", "")
-    log.info("DEBUG: location comparison - before_type=%s, before_value=%r, after_type=%s, after_value=%r", 
-             type(before_location).__name__, before_location,
-             type(after_location).__name__, after_location)
+    # Determine action and colors
+    if action == "cancelled":
+        embed_title = f"🗑️ {after.get('title', 'Event')}"
+        embed_description = "**Event cancelled**"
+        embed_color = 0xe74c3c
+    else:
+        embed_title = f"📅 {after.get('title', 'Event')}"
+        embed_description = "**Event updated**"
+        embed_color = 0xf1c40f
     
-    if before.get("location", "").strip() != after.get("location", "").strip():
-        changes.append("\n📍 **Location**")
-        old_loc = before.get("location", "").strip()
-        new_loc = after.get("location", "").strip()
-        
-        if old_loc:
-            changes.append(f"~~{old_loc}~~")
-        changes.append(f"**{new_loc or 'No location'}**")
-        notification_parts.append(f"location → \"{new_loc or 'removed'}\"")
+    # Create the main embed
+    embed = Embed(
+        title=embed_title,
+        description=embed_description,
+        color=embed_color,
+        timestamp=dt.datetime.now(dt.timezone.utc)
+    )
     
-    # Debug logging for notes field types
-    before_notes = before.get("notes")
-    after_notes = after.get("notes")
-    log.info("DEBUG: notes comparison - before_notes_type=%s, before_notes_value=%r, after_notes_type=%s, after_notes_value=%r", 
-             type(before_notes).__name__, before_notes,
-             type(after_notes).__name__, after_notes)
+    # Note: We can't fetch the Teamup URL here since this is not an async function
+    # The URL would need to be passed in if needed
     
+    # Time field with diff highlighting
+    time_info = format_time_range_for_embed(after.get("start_dt"), after.get("end_dt"))
+    time_field_name = "🕒 When"
+    
+    # Check if time changed
+    if (before.get("start_dt") != after.get("start_dt") or 
+        before.get("end_dt") != after.get("end_dt")):
+        time_field_name = "🕒 When 🔄"  # Indicate change
+        if before.get("start_dt") or before.get("end_dt"):
+            old_time = format_time_range_for_embed(before.get("start_dt"), before.get("end_dt"))
+            time_info = f"~~{old_time}~~\n**{time_info}**"
+    
+    embed.add_field(name=time_field_name, value=time_info, inline=False)
+    
+    # Location field with diff highlighting
+    location = after.get("location", "").strip()
+    location_field_name = "📍 Where"
+    location_value = location or "No location set"
+    
+    # Check if location changed
+    old_location = before.get("location", "").strip()
+    if old_location != location:
+        location_field_name = "📍 Where 🔄"  # Indicate change
+        if old_location and location:
+            location_value = f"~~{old_location}~~\n**{location}**"
+        elif old_location and not location:
+            location_value = f"~~{old_location}~~\n**No location**"
+        elif not old_location and location:
+            location_value = f"**{location}** *(new)*"
+    
+    if location or old_location:  # Only show if there's a current or previous location
+        embed.add_field(name=location_field_name, value=location_value, inline=False)
+    
+    # Details field with diff highlighting
     def extract_notes_text(notes_field):
         if isinstance(notes_field, dict) and 'html' in notes_field:
             return notes_field['html']
@@ -1078,43 +1083,49 @@ def create_event_diff_embed(before_data: Dict[str, Any] = None, after_data: Dict
         else:
             return ""
     
-    old_desc = extract_notes_text(before.get("notes")).strip()
-    new_desc = extract_notes_text(after.get("notes")).strip()
-    
-    if old_desc != new_desc:
-        changes.append("\n📝 **Details**")
-        if old_desc:
-            display_old = old_desc[:100] + "..." if len(old_desc) > 100 else old_desc
-            changes.append(f"~~{display_old}~~")
-        
-        if new_desc:
-            display_new = new_desc[:200] + "..." if len(new_desc) > 200 else new_desc
-            changes.append(f"**{display_new}**")
-        else:
-            changes.append("**Details removed**")
-        
-        notification_parts.append("details changed")
-    
-    if action == "cancelled":
-        notification = f"🗑️ **Event cancelled**"
-        embed_title = "🗑️ Event Cancelled"
-        embed_color = 0xe74c3c
+    # Get description from the appropriate source
+    if teamup_event_data:
+        notes_field = teamup_event_data.get("notes")
+        description = extract_notes_text(notes_field).strip()
     else:
-        if notification_parts:
-            notification = f"✏️ **Event updated**: {', '.join(notification_parts)}"
-        else:
-            notification = f"✏️ **Event updated**"
-        embed_title = "✏️ Event Updated"
-        embed_color = 0xf1c40f
+        description = after.get("description", "").strip()
     
-    embed = Embed(
-        title=embed_title,
-        description="\n".join(changes) if changes else "Event details have been updated.",
-        color=embed_color,
-        timestamp=dt.datetime.now(dt.timezone.utc)
-    )
+    old_description = extract_notes_text(before.get("notes", "")).strip() if "notes" in before else before.get("description", "").strip()
     
-    return notification, embed
+    details_field_name = "📝 Details"
+    details_value = description or "No details provided"
+    
+    # Check if description changed
+    if old_description != description:
+        details_field_name = "📝 Details 🔄"  # Indicate change
+        if old_description and description:
+            # Truncate for display
+            display_old = old_description[:150] + "..." if len(old_description) > 150 else old_description
+            display_new = description[:300] + "..." if len(description) > 300 else description
+            details_value = f"~~{display_old}~~\n**{display_new}**"
+        elif old_description and not description:
+            display_old = old_description[:150] + "..." if len(old_description) > 150 else old_description
+            details_value = f"~~{display_old}~~\n**No details**"
+        elif not old_description and description:
+            display_new = description[:300] + "..." if len(description) > 300 else description
+            details_value = f"**{display_new}** *(new)*"
+    elif description:
+        # Truncate if no changes but still showing
+        if len(description) > 500:
+            details_value = description[:497] + "..."
+    
+    if description or old_description:  # Only show if there are current or previous details
+        embed.add_field(name=details_field_name, value=details_value, inline=False)
+    
+    # Add title change info if it changed
+    if before.get("title") != after.get("title") and before.get("title"):
+        embed.add_field(
+            name="📝 Name Changed", 
+            value=f"~~{before['title']}~~ → **{after.get('title', 'Unknown')}**", 
+            inline=False
+        )
+    
+    return embed
 
 
 async def cleanup_thread(dc_id: int):
@@ -1218,12 +1229,12 @@ async def on_scheduled_event_update(before: ScheduledEvent, after: ScheduledEven
         try:
             await update_tu_event(tu_id, after)
             
-            notification, embed = create_event_diff_embed(
+            embed = create_event_update_embed(
                 discord_before=before,
                 discord_after=after,
                 action="updated"
             )
-            await post_in_thread(after.id, content=notification, embed=embed)
+            await post_in_thread(after.id, embed=embed)
             
             log.info("✅ Successfully updated Teamup event %s", tu_id)
         except Exception as e:
@@ -1255,11 +1266,11 @@ async def on_scheduled_event_delete(event: ScheduledEvent):
             await delete_tu_event(tu_id)
             EVENT_MAP.pop(tu_id, None)
             
-            notification, embed = create_event_diff_embed(
+            embed = create_event_update_embed(
                 after_data={"title": event.name},
                 action="cancelled"
             )
-            await post_in_thread(event.id, content=notification, embed=embed)
+            await post_in_thread(event.id, embed=embed)
             
             await cleanup_thread(event.id)
             save_events()
@@ -1505,14 +1516,14 @@ async def handle_teamup_trigger(trigger: str, data: Dict[str, Any]):
                     
                     await update_dc_event(dc_id, ev)
                     
-                    notification, embed = create_event_diff_embed(
+                    embed = create_event_update_embed(
                         before_data=discord_before,
                         after_data=teamup_after,
-                        action="updated"
+                        action="updated",
+                        teamup_event_data=ev
                     )
                     
-                    
-                    await post_in_thread(dc_id, content=notification, embed=embed)
+                    await post_in_thread(dc_id, embed=embed)
                     
                 except discord.NotFound:
                     log.warning("Discord event %s not found during Teamup update", dc_id)
@@ -1529,11 +1540,11 @@ async def handle_teamup_trigger(trigger: str, data: Dict[str, Any]):
                     try:
                         await cancel_dc_event(dc_id)
                         
-                        notification, embed = create_event_diff_embed(
+                        embed = create_event_update_embed(
                             after_data={"title": ev.get("title", "Event")},
                             action="cancelled"
                         )
-                        await post_in_thread(dc_id, content=notification, embed=embed)
+                        await post_in_thread(dc_id, embed=embed)
                         
                         await cleanup_thread(dc_id)
                     except Exception as e:
