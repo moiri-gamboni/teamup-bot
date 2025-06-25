@@ -836,10 +836,15 @@ async def post_root_embed(tu_ev: Dict[str, Any], trigger: str) -> tuple[int, int
         embed.add_field(name="🕒 When", value=time_info, inline=False)
         
         location = tu_ev.get("location")
+        log.info("DEBUG: location field data for event %s: type=%s, value=%r", tu_ev.get('id'), type(location).__name__, location)
         if location and location.strip():
             embed.add_field(name="📍 Where", value=location, inline=False)
         
         description = tu_ev.get("notes") or tu_ev.get("description")
+        log.info("DEBUG: description field data for event %s: notes_type=%s, notes_value=%r, description_type=%s, description_value=%r", 
+                tu_ev.get('id'), 
+                type(tu_ev.get("notes")).__name__, tu_ev.get("notes"),
+                type(tu_ev.get("description")).__name__, tu_ev.get("description"))
         if description and description.strip():
             if len(description) > 1000:
                 description = description[:997] + "..."
@@ -939,6 +944,13 @@ def create_event_diff_embed(before_data: Dict[str, Any] = None, after_data: Dict
         except:
             notification_parts.append("time changed")
     
+    # Debug logging for location field types
+    before_location = before.get("location", "")
+    after_location = after.get("location", "")
+    log.info("DEBUG: location comparison - before_type=%s, before_value=%r, after_type=%s, after_value=%r", 
+             type(before_location).__name__, before_location,
+             type(after_location).__name__, after_location)
+    
     if before.get("location", "").strip() != after.get("location", "").strip():
         changes.append("\n📍 **Location**")
         old_loc = before.get("location", "").strip()
@@ -948,6 +960,17 @@ def create_event_diff_embed(before_data: Dict[str, Any] = None, after_data: Dict
             changes.append(f"~~{old_loc}~~")
         changes.append(f"**{new_loc or 'No location'}**")
         notification_parts.append(f"location → \"{new_loc or 'removed'}\"")
+    
+    # Debug logging for description/notes field types
+    before_notes = before.get("notes")
+    before_desc = before.get("description")
+    after_notes = after.get("notes")
+    after_desc = after.get("description")
+    log.info("DEBUG: description/notes comparison - before_notes_type=%s, before_notes_value=%r, before_desc_type=%s, before_desc_value=%r, after_notes_type=%s, after_notes_value=%r, after_desc_type=%s, after_desc_value=%r", 
+             type(before_notes).__name__, before_notes,
+             type(before_desc).__name__, before_desc,
+             type(after_notes).__name__, after_notes,
+             type(after_desc).__name__, after_desc)
     
     old_desc = (before.get("notes") or before.get("description") or "").strip()
     new_desc = (after.get("notes") or after.get("description") or "").strip()
@@ -1275,6 +1298,9 @@ async def handle_teamup_trigger(trigger: str, data: Dict[str, Any]):
             if not ev or "id" not in ev:
                 log.warning("Invalid event data in webhook: %s", ev)
                 return
+                
+            # Debug logging for complete event structure
+            log.info("DEBUG: Full event data structure for event %s: %r", ev.get("id"), ev)
                 
             tu_id = str(ev["id"])
             
