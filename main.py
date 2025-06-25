@@ -745,6 +745,7 @@ async def update_tu_event(tu_id: str, ev: ScheduledEvent):
     """Update Teamup event with Discord event changes."""
     try:
         body = {
+            "id": tu_id,
             "title": ev.name,
             "start_dt": format_teamup_datetime(ev.start_time),
             "end_dt": format_teamup_datetime(ev.end_time),
