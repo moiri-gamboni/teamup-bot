@@ -23,7 +23,7 @@ import time
 
 import discord
 from discord.ext import commands
-from discord import Interaction, Embed, ui, EntityType, ScheduledEvent
+from discord import Interaction, Embed, ui, EntityType, ScheduledEvent, PrivacyLevel
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
@@ -716,7 +716,8 @@ async def create_dc_event_from_tu(ev: Dict[str, Any]) -> int:
             end_time=end,
             entity_type=EntityType.external,
             location=ev.get("location") or "Teamup",
-            description=discord_description
+            description=discord_description,
+            privacy_level=PrivacyLevel.guild_only
         )
         return dc_ev.id
     except discord.RateLimited as e:
