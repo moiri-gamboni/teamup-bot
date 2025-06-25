@@ -793,6 +793,12 @@ async def post_root_embed(tu_ev: Dict[str, Any], trigger: str) -> tuple[int, int
         colors = {"event.created": 0x2ecc71, "event.modified": 0xf1c40f, "event.removed": 0xe74c3c}
         verbs  = {"event.created": "created", "event.modified": "updated", "event.removed": "deleted"}
 
+        thread = await chan.create_thread(
+            name=f"🗓️ {title}", 
+            auto_archive_duration=1440,
+            type=discord.ChannelType.public_thread
+        )
+        
         embed = Embed(description=f"**Event {verbs.get(trigger,'updated')}**: [{title}]({pointer_url})",
                       color=colors.get(trigger, 0x95a5a6))
         embed.set_footer(text=f"Starts {start_human}")
@@ -800,10 +806,9 @@ async def post_root_embed(tu_ev: Dict[str, Any], trigger: str) -> tuple[int, int
         dc_id = EVENT_MAP.get(str(tu_ev["id"]))
         view = None if trigger == "event.removed" or not dc_id else SignupView(str(tu_ev["id"]), dc_id)
         
-        root = await chan.send(embed=embed, view=view)
-        thread = await chan.create_thread(name=f"🗓️ {title}", message=root, auto_archive_duration=1440)
+        first_message = await thread.send(embed=embed, view=view)
         
-        return root.id, thread.id
+        return first_message.id, thread.id
         
     except Exception as e:
         log.error("Failed to post root embed for event %s: %s", tu_ev.get('id'), e)
