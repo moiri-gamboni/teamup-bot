@@ -1049,19 +1049,20 @@ def create_event_update_embed(before_data: Dict[str, Any] = None, after_data: Di
     # Note: We can't fetch the Teamup URL here since this is not an async function
     # The URL would need to be passed in if needed
     
-    # Time field with diff highlighting
-    time_info = format_time_range_for_embed(after.get("start_dt"), after.get("end_dt"))
-    time_field_name = "🕒 When"
-    
-    # Check if time changed
-    if (before.get("start_dt") != after.get("start_dt") or 
-        before.get("end_dt") != after.get("end_dt")):
-        time_field_name = "🕒 When 🔄"  # Indicate change
-        if before.get("start_dt") or before.get("end_dt"):
-            old_time = format_time_range_for_embed(before.get("start_dt"), before.get("end_dt"))
-            time_info = f"~~{old_time}~~\n**{time_info}**"
-    
-    embed.add_field(name=time_field_name, value=time_info, inline=False)
+    # Time field with diff highlighting (skip for cancelled events)
+    if action != "cancelled":
+        time_info = format_time_range_for_embed(after.get("start_dt"), after.get("end_dt"))
+        time_field_name = "🕒 When"
+        
+        # Check if time changed
+        if (before.get("start_dt") != after.get("start_dt") or 
+            before.get("end_dt") != after.get("end_dt")):
+            time_field_name = "🕒 When 🔄"  # Indicate change
+            if before.get("start_dt") or before.get("end_dt"):
+                old_time = format_time_range_for_embed(before.get("start_dt"), before.get("end_dt"))
+                time_info = f"~~{old_time}~~\n**{time_info}**"
+        
+        embed.add_field(name=time_field_name, value=time_info, inline=False)
     
     # Location field with diff highlighting
     location = after.get("location", "").strip()
