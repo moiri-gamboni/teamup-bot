@@ -963,9 +963,13 @@ async def post_root_embed(tu_ev: Dict[str, Any], trigger: str) -> tuple[int, int
         
         access_message = ""
         if not CFG.use_personal_links and CFG.teamup_access_link:
-            access_message = f"\n\n📅 You can view and modify this event on Teamup: {CFG.teamup_access_link}"
+            access_message = f"📅 **View/Edit on Teamup:** {CFG.teamup_access_link}"
+            log.info("Access message will be displayed: %r", access_message)
+        else:
+            log.info("Access message not displayed - use_personal_links=%s, teamup_access_link=%r", 
+                    CFG.use_personal_links, CFG.teamup_access_link)
         
-        first_message = await thread.send(embed=embed, content=access_message, view=view)
+        first_message = await thread.send(embed=embed, content=access_message or None, view=view)
         
         return first_message.id, thread.id
         
