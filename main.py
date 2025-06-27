@@ -1841,9 +1841,12 @@ async def health_monitor():
             if not healthy:
                 log.warning("System health check failed - some services may be degraded")
         except asyncio.CancelledError:
+            log.info("Health monitor shutting down gracefully")
             break
         except Exception as e:
             log.error("Health monitor error: %s", e)
+            # Continue running even on errors - don't let health check failures kill the app
+            await asyncio.sleep(60)  # Wait 1 minute before retrying
 
 async def start_all():
     """Concurrent services enable bidirectional sync - Discord events + Teamup webhooks."""
@@ -1865,11 +1868,20 @@ async def start_all():
         
         health_task = loop.create_task(health_monitor())
         
+        # Only shut down if bot or server fails, not health monitor
         done, pending = await asyncio.wait(
-            [bot_task, server_task, health_task], 
+            [bot_task, server_task], 
             return_when=asyncio.FIRST_COMPLETED
         )
         
+        # Cancel health monitor and wait for it to finish
+        health_task.cancel()
+        try:
+            await health_task
+        except asyncio.CancelledError:
+            pass
+        
+        # Cancel any remaining tasks
         for task in pending:
             task.cancel()
             try:
